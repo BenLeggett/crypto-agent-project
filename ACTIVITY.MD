@@ -39,3 +39,10 @@
 - Added `.gitignore` tuned for the paper-first trading system.
 - Excluded local secrets, Python caches, virtual environments, runtime market data, journals, summaries, Freqtrade generated state, logs, notebook checkpoints, build outputs, and editor/OS noise.
 - Preserved tracked placeholders such as `.env.example` and `.gitkeep` files.
+
+## 2026-04-25
+- Implemented Task 2: typed config models and layered config loader.
+- Added dataclass config models, fail-fast validators, and a dependency-free loader for the current simple YAML config files.
+- Supported `configs/base/` plus `configs/dry_run` or `configs/live` app overlays, with explicit environment variable overrides.
+- Preserved paper-first defaults, kept live execution disabled, and made real AI provider selection fail closed without `OPENAI_API_KEY`.
+- Added config loader tests for defaults, live gating, environment overrides, invalid modes, live execution rejection, and AI provider secret boundaries.

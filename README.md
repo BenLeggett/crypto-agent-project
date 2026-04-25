@@ -33,3 +33,15 @@ make test
 Secrets are never required for this slice. Use `.env.example` as a placeholder
 reference only; real credentials belong in local secret storage or an untracked
 `.env` when later manual wiring steps are approved.
+
+## Configuration
+
+Configuration loads from `configs/base/` plus an environment overlay selected by
+`CONFIG_ENV`; the safe default is `dry_run`. The loader also accepts explicit
+environment overrides such as `SYMBOLS`, `TIMEFRAMES`, `LOG_LEVEL`, and
+`AI_PROVIDER`.
+
+Live config is present only as a gated future path. In this foundation slice,
+any attempt to set live execution enabled fails closed during config validation.
+Real AI providers require their matching secret env var, while the default
+`mock` provider requires no secret.
