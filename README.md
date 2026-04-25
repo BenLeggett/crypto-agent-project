@@ -70,3 +70,15 @@ operator diagnostics.
 project-specific OHLCV and market metadata reads. It is mock-first and does not
 require secrets. Freqtrade remains the preferred foundation for solved data,
 backtest, dry-run, and execution workflows where it fits.
+
+Historical OHLCV bootstrap and incremental update jobs now build explicit
+Freqtrade `download-data` commands through an injectable command runner. Tests
+use mocks, so no Freqtrade install, exchange network access, or credentials are
+required for validation.
+
+Example command shape once Freqtrade is installed locally:
+
+```bash
+make data-bootstrap ARGS="--symbols BTC/USDT ETH/USDT --timeframes 1h 4h --exchange binance"
+make data-update ARGS="--symbols BTC/USDT --timeframes 1h --days 7 --exchange binance"
+```

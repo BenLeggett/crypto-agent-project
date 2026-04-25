@@ -75,3 +75,9 @@
 - Added typed OHLCV and market metadata records, retry/timeout handling, and an optional public CCXT exchange factory.
 - Kept CCXT optional and mock-first so local tests require no exchange credentials, secrets, or network calls.
 - Added unit tests for parsing, retries, malformed responses, constructor validation, and optional factory behavior.
+
+## 2026-04-25
+- Implemented Task 6: OHLCV collector job.
+- Added Freqtrade-first `download-data` command construction and a command-runner boundary so bootstrap/update behavior can be tested without Freqtrade, network access, or credentials.
+- Wired bootstrap and incremental update scripts plus Make targets while preserving paper-first defaults and no live wallet behavior.
+- Added mocked unit tests for command construction, job overrides, update windows, validation failures, and command failures.
