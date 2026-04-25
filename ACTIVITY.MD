@@ -46,3 +46,14 @@
 - Supported `configs/base/` plus `configs/dry_run` or `configs/live` app overlays, with explicit environment variable overrides.
 - Preserved paper-first defaults, kept live execution disabled, and made real AI provider selection fail closed without `OPENAI_API_KEY`.
 - Added config loader tests for defaults, live gating, environment overrides, invalid modes, live execution rejection, and AI provider secret boundaries.
+
+## 2026-04-25
+- Implemented Task 3: config validation tests.
+- Added fixture-backed valid config files under `tests/fixtures/configs/valid`.
+- Expanded config tests for required fields, enum bounds, override precedence, live promotion gating, deterministic risk governor enforcement, premium model guardrails, and AI provider secret behavior.
+
+## 2026-04-25
+- Performed a third-pass docs reconciliation to clarify the practical build strategy.
+- Aligned docs around using the existing Freqtrade-leaning foundation for execution, dry-run, backtesting, and later gated live paths where appropriate.
+- Clarified that custom engineering should focus on deterministic risk governance, promotion gates, audit/journaling, reporting, orchestration glue, model-informed analysis boundaries, and live-readiness controls rather than rebuilding solved framework capabilities.
+- Documented profitable trading as the business optimization target while preserving risk constraints, evaluation discipline, staged promotion gates, and no guarantee of profitability.

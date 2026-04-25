@@ -1,0 +1,4 @@
+mode: live
+execution: gated_live
+live_execution_enabled: false
+requires_promotion_marker: true

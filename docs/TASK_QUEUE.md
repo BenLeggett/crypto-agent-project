@@ -1,5 +1,7 @@
 # Task Queue
 
+Implementation bias: use the selected Freqtrade-leaning trading foundation for solved backtesting, dry-run/paper execution, exchange order lifecycle, and later gated live behavior. Custom work should focus on deterministic risk governance, promotion gates, operator reporting, orchestration, audit/journaling, model-informed analysis boundaries, and live-readiness controls. The business objective is profitable trading, but tests and docs must treat profitability as an optimization target constrained by risk and evidence, not as a guarantee.
+
 ## 1. Create repo skeleton
 - Goal: Create the top-level repo directories and placeholder files matching the architecture.
 - Files likely affected: `README.md`, `Makefile`, `pyproject.toml`, `docker-compose.yml`, `apps/**`, `libs/**`, `configs/**`, `docs/**`, `tests/**`
@@ -25,16 +27,16 @@
 - Done criteria: every app uses common logging config; logs include run ID and service name.
 
 ## 5. Implement CCXT client wrapper
-- Goal: Centralize exchange reads for market data collection.
-- Files likely affected: `libs/market_data/ccxt_client.py`
+- Goal: Add a narrow CCXT read wrapper only for project-specific market-data needs not covered by the selected foundation.
+- Files likely affected: `libs/market_data/ccxt_client.py`, `docs/MANUAL_WIRING_CHECKLIST.md` if new credential assumptions are introduced
 - Dependencies: 2
-- Done criteria: wrapper exposes OHLCV and metadata fetch methods with retry and timeout handling.
+- Done criteria: wrapper exposes mocked OHLCV and metadata fetch methods with retry and timeout handling; it does not duplicate broad framework exchange support.
 
 ## 6. Build OHLCV collector job
-- Goal: Fetch and normalize OHLCV for configured symbols and timeframes.
-- Files likely affected: `libs/market_data/collectors.py`, `apps/collector/jobs.py`, `scripts/bootstrap_data.py`, `scripts/update_market_data.py`
+- Goal: Bootstrap OHLCV using Freqtrade data facilities where practical, with custom collection only for project-specific gaps.
+- Files likely affected: `libs/market_data/collectors.py`, `apps/collector/jobs.py`, `scripts/bootstrap_data.py`, `scripts/update_market_data.py`, `Makefile`
 - Dependencies: 5
-- Done criteria: bootstrap and incremental collection both work for configured symbols.
+- Done criteria: bootstrap and incremental update commands prefer the selected foundation and remain testable with mocked exchange/data responses.
 
 ## 7. Implement storage layer for Parquet and DuckDB
 - Goal: Persist raw and curated datasets and register analytics tables.
@@ -97,10 +99,10 @@
 - Done criteria: strategy library passes deterministic unit tests from fixed fixtures.
 
 ## 17. Add research helpers and backtest utilities
-- Goal: Create reusable offline helpers for analysis and result generation.
-- Files likely affected: `apps/research/main.py`, `apps/research/reports.py`
+- Goal: Wrap framework backtesting outputs and add project-specific result/evidence generation.
+- Files likely affected: `apps/research/main.py`, `apps/research/reports.py`, `scripts/run_walkforward.py`
 - Dependencies: 15
-- Done criteria: research commands can load data, run strategy, and emit saved metrics.
+- Done criteria: research commands can consume framework backtest outputs, run project walk-forward/evaluation helpers, and emit saved metrics.
 
 ## 18. Implement walk-forward runner
 - Goal: Add walk-forward evaluation over saved datasets.
@@ -145,10 +147,10 @@
 - Done criteria: adapter imports shared logic and does not reimplement core rules.
 
 ## 25. Add Freqtrade configs and wrappers
-- Goal: Wire dry-run and future live Freqtrade configs into the repo.
+- Goal: Wire the selected Freqtrade foundation for backtest, dry-run/paper, and future gated live configs.
 - Files likely affected: `freqtrade/user_data/config.dryrun.json`, `freqtrade/user_data/config.live.json`, `configs/dry_run/freqtrade.json`, `configs/live/freqtrade.json`, `Makefile`
 - Dependencies: 24
-- Done criteria: dry-run config boots locally; live config exists but is not default and requires explicit live-readiness settings.
+- Done criteria: dry-run config boots locally; backtest/dry-run wrappers call Freqtrade directly; live config exists but is not default and requires explicit live-readiness settings.
 
 ## 26. Add Freqtrade integration tests
 - Goal: Verify adapter compatibility and smoke-test backtest/dry-run paths.
@@ -211,7 +213,7 @@
 - Done criteria: replay produces ordered decision/incident timelines for a given run ID or date range.
 
 ## 36. Implement paper-mode end-to-end compose setup
-- Goal: Run collector, decision engine, Freqtrade dry-run, supervisor, and journaling together.
+- Goal: Run the selected foundation data/execution path, decision engine, Freqtrade dry-run, supervisor, and journaling together.
 - Files likely affected: `docker-compose.yml`, app entrypoints, configs
 - Dependencies: 25, 28, 34
 - Done criteria: one command starts the paper-trading stack locally or on a VPS.
@@ -265,7 +267,7 @@
 - Done criteria: daily briefing is generated from rollups and retrieval results using the cheap/default model tier only.
 
 ## 45. Implement periodic operator update job
-- Goal: Send periodic paper-mode updates through a mock-safe bot/chat/reporting interface.
+- Goal: Send periodic paper-mode updates through a mock-safe bot/chat/reporting interface, reusing framework-native status where useful.
 - Files likely affected: `apps/report_jobs/operator_update.py`, `libs/notifier/schemas.py`, `libs/notifier/mock_notifier.py`, `libs/notifier/chat_webhook.py`, `scripts/emit_operator_update.py`
 - Dependencies: 34, 44
 - Done criteria: update payload includes mode, proposals, fills, risk state, drawdown, health, and incidents; mock delivery works without secrets.

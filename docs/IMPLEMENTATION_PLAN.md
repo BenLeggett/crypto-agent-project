@@ -6,6 +6,12 @@
 ```md
 # Implementation Plan
 
+## Build strategy
+
+Use Freqtrade as the selected trading foundation where it provides proven backtesting, dry-run/paper execution, exchange order lifecycle, and later gated live execution behavior. Custom engineering should focus on project-specific layers: deterministic risk governance, promotion gates, reporting, orchestration, audit/journaling, autonomous or model-informed analysis, and live-readiness controls.
+
+The business objective is profitable trading, but profitability is an optimization target constrained by risk limits, evaluation evidence, observability, and staged promotion gates. The plan must not treat profitability as guaranteed or treat backtest results alone as live approval.
+
 ## Phase 1 - Repo skeleton and config foundation
 
 ### Deliverables
@@ -31,10 +37,11 @@
 ## Phase 2 - Market data ingestion and storage
 
 ### Deliverables
-- CCXT collector for OHLCV and metadata.
-- Normalization and quality checks.
-- Parquet and DuckDB storage wiring.
-- Bootstrap and incremental update scripts.
+- Freqtrade data-download/backtest-data path evaluated and wired as the default market-data foundation where practical.
+- Narrow CCXT collector for OHLCV and metadata only where project-specific datasets are not covered by the foundation.
+- Normalization and quality checks for project-owned datasets.
+- Parquet and DuckDB storage wiring for replay, reporting, and research artifacts.
+- Bootstrap and incremental update scripts that prefer framework facilities before custom collection.
 
 ### Required tests
 - Collector unit tests with mocked CCXT responses.
@@ -42,9 +49,10 @@
 - Data quality tests for duplicates, missing candles, timestamp ordering.
 
 ### Acceptance criteria
-- Historical data bootstrap completes for configured symbols and timeframes.
+- Historical data bootstrap completes for configured symbols and timeframes using the selected foundation where possible.
 - Incremental updates are idempotent.
 - Quality checks block corrupt datasets.
+- Custom collectors do not duplicate framework exchange support without a project-specific reason.
 
 ## Phase 3 - Deterministic strategy library
 
@@ -69,7 +77,7 @@
 
 ### Deliverables
 - Research entrypoint.
-- Vectorbt-backed baseline analysis.
+- Freqtrade backtesting integration used as the primary baseline where suitable.
 - Walk-forward runner.
 - Result storage and summary reports.
 - Baseline evaluation format for deterministic and model-informed decision variants.
@@ -83,6 +91,7 @@
 - Walk-forward runs produce versioned result artifacts.
 - Metrics are reproducible.
 - Strategy and decision-engine promotion decisions can be grounded in saved outputs.
+- Custom research utilities add promotion/evaluation evidence instead of replacing framework backtesting wholesale.
 
 ## Phase 5 - Decision engine and autonomous proposal schema
 
@@ -108,9 +117,11 @@
 ## Phase 6 - Freqtrade integration
 
 ### Deliverables
+- Freqtrade installed/configured as the selected execution and research shell.
 - Freqtrade strategy adapter using shared deterministic strategy/decisioning logic.
 - Dry-run and live Freqtrade configs.
 - Backtest and dry-run command wrappers.
+- Optional wiring notes for Freqtrade-native Telegram/Web UI controls, kept mock/manual until credentials exist.
 
 ### Required tests
 - Integration tests between Freqtrade adapter and strategy/decisioning library.
@@ -122,6 +133,7 @@
 - Shared logic is imported, not duplicated.
 - Backtest path and execution path use the same core rule/proposal format.
 - Live config exists but is not default and cannot run without required gates and secrets.
+- Custom code does not reimplement Freqtrade order lifecycle, exchange adapters, or basic runtime monitoring.
 
 ## Phase 7 - Supervisor and deterministic risk controls
 
@@ -166,7 +178,7 @@
 ## Phase 9 - Paper-trading end-to-end
 
 ### Deliverables
-- Collector + decision engine + Freqtrade dry-run + supervisor + journal working together.
+- Selected foundation data/execution path + decision engine + Freqtrade dry-run + supervisor + journal working together.
 - Daily report script.
 - Promotion checklist draft.
 
@@ -235,6 +247,7 @@
 - Daily operator briefing using cheap/default model only.
 - Periodic bot/chat/report update job.
 - Mock notifier and manual webhook/bot wiring placeholders.
+- Integration path for framework-native Telegram/Web UI status where useful, without making those credentials required.
 
 ### Required tests
 - Retrieval relevance smoke tests.

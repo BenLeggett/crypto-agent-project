@@ -1,7 +1,7 @@
 # AGENTS
 
 ## Purpose
-This repository implements a staged autonomous crypto trading bot system with deterministic risk controls, paper-first rollout, structured observability, and a later gated path toward small-capital live execution. Codex must preserve the deterministic risk governor and safety boundaries while allowing autonomous or model-informed analysis, signal generation, and paper-trading decisions where explicitly designed.
+This repository implements a staged autonomous crypto trading bot system whose business objective is profitable trading, constrained by deterministic risk controls, paper-first rollout, structured observability, and a later gated path toward small-capital live execution. Codex must preserve the deterministic risk governor and safety boundaries while allowing autonomous or model-informed analysis, signal generation, and paper-trading decisions where explicitly designed. Documentation and code must treat profitability as an optimization target, never as a guarantee.
 
 ## Scope boundaries
 
@@ -36,6 +36,8 @@ This repository implements a staged autonomous crypto trading bot system with de
 7. Keep model-informed decision modules explicit, schema-driven, logged, and replayable.
 8. Prefer explicit modules and typed schemas over abstraction-heavy designs.
 9. Prefer boring local infrastructure over additional services in v1.
+10. Reuse the selected trading foundation where it already provides proven behavior. The current docs lean toward Freqtrade as the execution, dry-run, backtest, and later live shell; Codex should integrate and configure it before rebuilding equivalent exchange, order-lifecycle, paper-trading, or monitoring capabilities.
+11. Custom engineering should focus on project-specific layers: deterministic risk governance, promotion gates, operator reporting, orchestration glue, audit/journaling, model-informed analysis boundaries, and live-readiness controls.
 
 ## Hard red lines
 1. Do not give AI or any model unchecked live order authority.
@@ -53,17 +55,18 @@ This repository implements a staged autonomous crypto trading bot system with de
 1. Plan first for any non-trivial task.
 2. Prefer minimal patches over wide refactors.
 3. Reuse existing modules before creating new ones.
-4. Keep functions small and explicit.
-5. Add descriptive inline comments where logic is non-obvious.
-6. Fail fast on invalid config or invalid state.
-7. Use typed models or typed dicts for machine-readable boundaries.
-8. Keep side effects at edges; keep core logic pure where possible.
-9. Do not hide network calls behind utility helpers with ambiguous names.
-10. Avoid optionality in implementation unless the architecture explicitly requires it.
-11. Implement everything possible without external secrets, personal credentials, API keys, private account data, wallet keys, or production-only settings.
-12. For secret-backed features, implement interfaces, env-var placeholders, config schema entries, mocks/fakes, tests against mocks, and manual setup notes only.
-13. Do not hardcode tokens, keys, account IDs, wallet data, webhook URLs, or private endpoints.
-14. Keep the repository fully runnable in mock or paper mode wherever practical.
+4. Reuse framework capabilities before creating project-owned replacements. Only build custom functionality when it enforces project-specific safety, observability, replayability, evaluation, operator-control, or model-boundary requirements.
+5. Keep functions small and explicit.
+6. Add descriptive inline comments where logic is non-obvious.
+7. Fail fast on invalid config or invalid state.
+8. Use typed models or typed dicts for machine-readable boundaries.
+9. Keep side effects at edges; keep core logic pure where possible.
+10. Do not hide network calls behind utility helpers with ambiguous names.
+11. Avoid optionality in implementation unless the architecture explicitly requires it.
+12. Implement everything possible without external secrets, personal credentials, API keys, private account data, wallet keys, or production-only settings.
+13. For secret-backed features, implement interfaces, env-var placeholders, config schema entries, mocks/fakes, tests against mocks, and manual setup notes only.
+14. Do not hardcode tokens, keys, account IDs, wallet data, webhook URLs, or private endpoints.
+15. Keep the repository fully runnable in mock or paper mode wherever practical.
 
 ## File placement rules
 - Shared deterministic strategy logic belongs in `libs/strategy`.

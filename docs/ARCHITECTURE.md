@@ -23,6 +23,35 @@
 
 ## Operating model
 
+### Profitability objective
+- The business objective is profitable trading over time.
+- Profitability is an optimization target constrained by drawdown limits, exposure limits, evaluation evidence, replayability, and staged promotion gates.
+- The system must never present profit as guaranteed or treat a profitable backtest as sufficient for live approval.
+
+### Build strategy
+- Use an existing trading framework as the execution and research foundation where it fits.
+- The current implementation path is Freqtrade-first for backtesting, dry-run/paper execution, exchange order lifecycle, later gated live execution, and built-in operator surfaces where useful.
+- Use CCXT through Freqtrade or narrow project adapters for market-data reads instead of rebuilding broad exchange support.
+- Custom code exists to add project-specific safety, evaluation, audit, reporting, orchestration, and model-boundary layers around the foundation.
+- Do not introduce a second trading framework unless the docs are explicitly revised to replace the selected foundation.
+
+### Leveraged foundation components
+- Freqtrade: execution shell for backtest, dry-run, paper-forward testing, and future tightly capped live trading.
+- Freqtrade strategy/config/user-data structure: adapter surface for shared deterministic strategy and decisioning logic.
+- Freqtrade Telegram/Web UI features: optional operator control surfaces after manual credential wiring.
+- CCXT: exchange metadata and OHLCV reads where direct collection is required.
+- SQLite, Parquet, and DuckDB: local persistence, analytics, and replayable artifacts.
+- SQLite FTS5: local retrieval over journals, summaries, incidents, and notes.
+
+### Custom system components
+- Deterministic risk governor and supervisor policy.
+- Promotion and live-readiness gates.
+- Proposal schemas, validators, and model-informed analysis boundaries.
+- Audit journals, event packets, replay tools, and evidence bundles.
+- Operator reporting beyond or alongside framework-native status surfaces.
+- AI router, prompt registry, quotas, usage ledger, and fail-closed model outputs.
+- Orchestration scripts that wire the foundation and custom safety layers together.
+
 ### Autonomous trading core
 - Collects and normalizes market data.
 - Computes deterministic features and/or model-ready input snapshots.
@@ -222,8 +251,9 @@ repo/
 
    Module responsibilities
 apps/collector
-Pull OHLCV and exchange metadata with CCXT.
-Persist normalized market data to Parquet.
+Use Freqtrade data-download/backtest data facilities where they satisfy the need.
+Use narrow CCXT collectors only for project-specific datasets not provided by the foundation.
+Persist normalized project datasets to Parquet when needed.
 Run quality checks before publishing curated datasets.
 libs/strategy
 Pure deterministic strategy logic.
@@ -238,10 +268,11 @@ Emit structured trade proposals or no-trade decisions.
 Never place orders directly.
 Never bypass supervisor/risk modules.
 freqtrade/
-Execution adapter for backtest, dry-run, and future live.
+Selected execution and backtesting foundation for backtest, dry-run/paper, and future live.
 Calls into shared strategy/decisioning logic.
 Owns exchange order lifecycle.
 Must receive only validated and risk-approved intents.
+Do not duplicate Freqtrade order management or exchange support in custom modules.
 apps/supervisor + libs/risk
 Account-level limits.
 Allowed market/universe enforcement.
@@ -303,8 +334,8 @@ Weekly review and premium escalation jobs.
 Data flow
 Paper autonomous path
 Exchange APIs
-  -> collector (CCXT)
-  -> Parquet / DuckDB
+  -> Freqtrade data/execution shell and/or narrow CCXT collector
+  -> framework data store plus Parquet / DuckDB when project artifacts are needed
   -> deterministic features + market snapshots
   -> decision_engine
   -> deterministic and/or model-informed signal/proposal generation
@@ -315,8 +346,8 @@ Exchange APIs
   -> journal + event packets + operator updates
 Future live path
 Exchange APIs
-  -> collector (CCXT)
-  -> Parquet / DuckDB
+  -> Freqtrade live execution shell
+  -> project snapshots / journals / event packets
   -> deterministic features + market snapshots
   -> decision_engine
   -> validated signal/proposal
@@ -335,8 +366,8 @@ market snapshots + deterministic features + journal + event packets + summaries 
   -> signal/proposal artifacts OR summaries / briefings / experiment cards / incident reviews
   -> journal + event packets
 Offline research path
-Parquet / DuckDB
-  -> research scripts / vectorbt / walk-forward
+Freqtrade backtest data + Parquet / DuckDB
+  -> Freqtrade backtesting plus project research scripts / walk-forward
   -> analysis artifacts
   -> human-reviewed strategy or model changes
   -> config / code update
