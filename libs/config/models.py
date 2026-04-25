@@ -22,6 +22,7 @@ class AppConfig:
     mode: AppMode
     service_name: str
     run_id_prefix: str
+    trading_foundation: str
     execution: str
     live_execution_enabled: bool
     requires_promotion_marker: bool

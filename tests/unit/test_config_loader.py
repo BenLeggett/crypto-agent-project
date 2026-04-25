@@ -16,6 +16,7 @@ def test_loads_dry_run_config_by_default() -> None:
     assert config.config_env == "dry_run"
     assert config.app.mode == AppMode.PAPER
     assert config.app.service_name == "fixture-agent"
+    assert config.app.trading_foundation == "freqtrade"
     assert config.app.execution == "dry_run"
     assert config.app.live_execution_enabled is False
     assert config.symbols.symbols == ("BTC/USDT", "ETH/USDT")
@@ -44,6 +45,7 @@ def test_environment_overrides_take_precedence() -> None:
             "TIMEFRAMES": "15m, 1h",
             "LOG_LEVEL": "debug",
             "APP_SERVICE_NAME": "override-agent",
+            "TRADING_FOUNDATION": "freqtrade",
             "AI_PROVIDER": "mock",
         }
     )
@@ -91,6 +93,7 @@ def test_missing_required_field_fails_fast(tmp_path: Path) -> None:
     ("env", "match"),
     [
         ({"APP_EXECUTION": "live_now"}, "Unsupported execution mode"),
+        ({"TRADING_FOUNDATION": "custom_bot"}, "Unsupported trading foundation"),
         ({"LOG_LEVEL": "TRACE"}, "Unsupported log level"),
         ({"LOG_FORMAT": "rainbow"}, "Unsupported log format"),
         ({"AI_DEFAULT_MODEL_TIER": "expensive"}, "Unsupported AI model tier"),

@@ -8,6 +8,7 @@ from libs.config.models import AIConfig, AppConfig, AppMode, ConfigError, Projec
 
 ALLOWED_CONFIG_ENVS = {"dry_run", "live"}
 ALLOWED_EXECUTIONS = {"offline", "dry_run", "gated_live"}
+ALLOWED_TRADING_FOUNDATIONS = {"freqtrade"}
 ALLOWED_LOG_LEVELS = {"DEBUG", "INFO", "WARNING", "ERROR", "CRITICAL"}
 ALLOWED_LOG_FORMATS = {"structured", "plain"}
 ALLOWED_MODEL_TIERS = {"cheap", "default", "premium"}
@@ -32,6 +33,8 @@ def _validate_app(app: AppConfig) -> None:
         raise ConfigError("app.service_name is required")
     if not app.run_id_prefix:
         raise ConfigError("app.run_id_prefix is required")
+    if app.trading_foundation not in ALLOWED_TRADING_FOUNDATIONS:
+        raise ConfigError(f"Unsupported trading foundation: {app.trading_foundation!r}")
     if app.execution not in ALLOWED_EXECUTIONS:
         raise ConfigError(f"Unsupported execution mode: {app.execution!r}")
     if app.mode == AppMode.LIVE:

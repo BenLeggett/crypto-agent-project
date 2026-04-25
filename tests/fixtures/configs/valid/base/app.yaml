@@ -1,3 +1,4 @@
 mode: paper
 service_name: fixture-agent
 run_id_prefix: fixture
+trading_foundation: freqtrade

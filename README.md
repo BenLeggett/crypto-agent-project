@@ -5,6 +5,17 @@ The current implementation is intentionally inert: packages import, placeholder
 entrypoints boot locally, and no exchange, model, wallet, or notifier network
 call is made.
 
+The business objective is profitable trading over time. Profitability is treated
+as an optimization target constrained by deterministic risk limits, paper-mode
+evidence, observability, and staged promotion gates; it is not guaranteed.
+
+The practical build path is Freqtrade-first: use Freqtrade for solved
+backtesting, dry-run/paper execution, exchange order lifecycle, and future gated
+live execution where appropriate. Custom code should stay focused on the
+project-specific layers: risk governance, promotion gates, reporting,
+orchestration, audit/journaling, model-informed analysis boundaries, and
+live-readiness controls.
+
 ## Current Slice
 
 - Repo skeleton and canonical module layout are present.

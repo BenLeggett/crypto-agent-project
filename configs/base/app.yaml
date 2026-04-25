@@ -2,3 +2,4 @@
 mode: paper
 service_name: crypto-agent-project
 run_id_prefix: local
+trading_foundation: freqtrade

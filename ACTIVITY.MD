@@ -57,3 +57,9 @@
 - Aligned docs around using the existing Freqtrade-leaning foundation for execution, dry-run, backtesting, and later gated live paths where appropriate.
 - Clarified that custom engineering should focus on deterministic risk governance, promotion gates, audit/journaling, reporting, orchestration glue, model-informed analysis boundaries, and live-readiness controls rather than rebuilding solved framework capabilities.
 - Documented profitable trading as the business optimization target while preserving risk constraints, evaluation discipline, staged promotion gates, and no guarantee of profitability.
+
+## 2026-04-25
+- Reconciled completed foundation work with the Freqtrade-first direction.
+- Added an explicit `trading_foundation: freqtrade` config field and validation guardrail so the selected foundation cannot drift silently.
+- Updated README messaging to reflect the profitability objective, risk-constrained promotion discipline, and custom-vs-foundation split.
+- Replaced root-level duplicate planning docs with pointers to canonical files under `docs/`.
