@@ -35,6 +35,7 @@ MODULES = [
     "libs.common.time",
     "libs.common.ids",
     "libs.common.hashing",
+    "libs.common.logging",
     "libs.config.models",
     "libs.config.loader",
     "libs.config.validators",

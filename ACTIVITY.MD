@@ -63,3 +63,9 @@
 - Added an explicit `trading_foundation: freqtrade` config field and validation guardrail so the selected foundation cannot drift silently.
 - Updated README messaging to reflect the profitability objective, risk-constrained promotion discipline, and custom-vs-foundation split.
 - Replaced root-level duplicate planning docs with pointers to canonical files under `docs/`.
+
+## 2026-04-25
+- Implemented Task 4: shared logging setup.
+- Added stdlib-only structured/plain logging configuration with `service_name` and `run_id` context.
+- Wired placeholder app entrypoints through the shared logger instead of direct `print` output.
+- Added logging tests for structured fields, handler replacement, plain context output, and app startup logging.

@@ -56,3 +56,10 @@ Live config is present only as a gated future path. In this foundation slice,
 any attempt to set live execution enabled fails closed during config validation.
 Real AI providers require their matching secret env var, while the default
 `mock` provider requires no secret.
+
+## Logging
+
+App entrypoints use shared logging from `libs/common/logging.py`. The default
+format is structured JSON from `configs/base/logging.yaml`, and each startup log
+includes `service_name` and `run_id` fields for later journaling, reporting, and
+operator diagnostics.

@@ -1,2 +1,3 @@
 level: INFO
 format: structured
+run_id_source: config_prefix
