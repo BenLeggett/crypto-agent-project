@@ -63,3 +63,10 @@ App entrypoints use shared logging from `libs/common/logging.py`. The default
 format is structured JSON from `configs/base/logging.yaml`, and each startup log
 includes `service_name` and `run_id` fields for later journaling, reporting, and
 operator diagnostics.
+
+## Market Data Boundary
+
+`libs/market_data/ccxt_client.py` provides a narrow read-only wrapper for
+project-specific OHLCV and market metadata reads. It is mock-first and does not
+require secrets. Freqtrade remains the preferred foundation for solved data,
+backtest, dry-run, and execution workflows where it fits.

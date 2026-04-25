@@ -69,3 +69,9 @@
 - Added stdlib-only structured/plain logging configuration with `service_name` and `run_id` context.
 - Wired placeholder app entrypoints through the shared logger instead of direct `print` output.
 - Added logging tests for structured fields, handler replacement, plain context output, and app startup logging.
+
+## 2026-04-25
+- Implemented Task 5: narrow CCXT read client wrapper.
+- Added typed OHLCV and market metadata records, retry/timeout handling, and an optional public CCXT exchange factory.
+- Kept CCXT optional and mock-first so local tests require no exchange credentials, secrets, or network calls.
+- Added unit tests for parsing, retries, malformed responses, constructor validation, and optional factory behavior.
