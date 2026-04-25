@@ -3,42 +3,65 @@
 ## System boundaries
 
 ### In scope
-- Deterministic market-data ingestion for a small liquid CEX spot universe.
-- Deterministic signal generation, position sizing, stop logic, and regime filtering.
-- Deterministic execution via Freqtrade for backtest, paper, and tightly capped live trading.
+- Market-data ingestion for a small liquid CEX spot universe.
+- Continuous market analysis in paper mode.
+- Deterministic and model-informed signal/proposal generation.
+- Autonomous paper-trading decisions subject to deterministic validation and risk checks.
+- Execution via Freqtrade for backtest, paper, and later tightly capped live trading.
 - Deterministic supervisor for account-level guardrails, reconciliation, freezes, flattening, and kill switches.
-- Append-only journals, event packets, reports, and operator alerts.
-- Asynchronous AI advisory plane for summarization, triage, journaling assistance, briefings, experiment support, and incident review.
+- Append-only journals, event packets, reports, bot/chat updates, and operator alerts.
+- AI/model plane for structured decision support, signal/proposal generation, summarization, triage, briefings, experiment support, and incident review.
+- Future live-wallet execution path after promotion criteria, review, and explicit human approval.
 
 ### Out of scope
-- AI-generated trade signals in the live path.
-- AI-controlled live order approval.
-- Autonomous AI parameter mutation in production.
-- Continuous agent loops for market monitoring.
+- Unchecked AI live order authority.
+- Live wallet execution on day one.
+- Autonomous mutation of live risk limits, leverage, universe, or deployment settings.
 - Managed vector DBs, agent frameworks, or multi-agent orchestration in v1.
-- News/social sentiment loops in the live path.
+- Direct news/social-to-trade execution in v1.
+- Any claim or assumption of guaranteed profitability.
 
 ## Operating model
 
-### Deterministic core
-- Market data collection.
-- Feature computation used by live strategy.
-- Regime filter.
-- Breakout/trend signal logic.
-- Sizing and stop logic.
-- Entry/exit intent.
-- Exchange order placement and cancellation.
-- Reconciliation.
-- Risk policy enforcement.
-- Kill switches.
+### Autonomous trading core
+- Collects and normalizes market data.
+- Computes deterministic features and/or model-ready input snapshots.
+- Generates trade signals or trade proposals through deterministic or model-informed decision modules.
+- Converts approved signals into execution intents.
+- Sends all intents through deterministic risk validation before paper or live execution.
+- Emits journals and event packets for every material decision.
 
-### AI advisory plane
-- Consumes compact event packets and journal records only.
-- Runs asynchronously.
+### Deterministic risk governor
+- Enforces hard constraints independent of the signal source.
+- Can veto new entries.
+- Can freeze entries.
+- Can trigger flatten workflow.
+- Can stop execution through kill switches.
+- Owns exposure, position-size, drawdown, allowed-market, and health rules.
+- Must remain testable, observable, and replayable.
+
+### Operator update plane
+- Produces periodic bot/chat/report updates while paper mode runs.
+- Sends structured summaries of:
+  - current mode
+  - active universe
+  - latest signals/proposals
+  - accepted/rejected decisions
+  - risk vetoes
+  - paper fills
+  - drawdown and exposure state
+  - health/reconciliation status
+  - notable incidents
+- Uses mock-safe delivery by default until real webhooks or bot credentials are manually wired.
+
+### AI/model plane
+- Uses `apps/ai_router` as the only model-call entrypoint.
+- Supports structured model-informed analysis and decision support.
+- May produce paper-mode signal/proposal outputs when explicitly configured.
 - Uses cheap/default models by default.
-- Escalates to premium models only for explicit high-value offline tasks.
-- Produces summaries, incident briefs, experiment cards, and operator reports.
-- Has zero write access to live execution controls.
+- Escalates to premium models only for approved offline review or evaluation jobs.
+- Produces schema-validated outputs only.
+- Has no unchecked authority to bypass deterministic risk policy.
 - Must remain operable with mocked providers and env-var placeholders when real credentials are unavailable.
 
 ## Final module layout
@@ -80,6 +103,11 @@ repo/
 │  │  ├─ main.py
 │  │  ├─ walkforward.py
 │  │  └─ reports.py
+│  ├─ decision_engine/
+│  │  ├─ main.py
+│  │  ├─ service.py
+│  │  ├─ proposal_builder.py
+│  │  └─ validators.py
 │  ├─ supervisor/
 │  │  ├─ main.py
 │  │  ├─ service.py
@@ -98,7 +126,8 @@ repo/
 │  ├─ report_jobs/
 │  │  ├─ daily_brief.py
 │  │  ├─ weekly_review.py
-│  │  └─ nightly_rollups.py
+│  │  ├─ nightly_rollups.py
+│  │  └─ operator_update.py
 │  └─ briefing_cli/
 │     └─ main.py
 ├─ libs/
@@ -124,6 +153,11 @@ repo/
 │  │  ├─ sizing.py
 │  │  ├─ stops.py
 │  │  └─ signal_snapshot.py
+│  ├─ decisioning/
+│  │  ├─ schemas.py
+│  │  ├─ deterministic_rules.py
+│  │  ├─ model_signals.py
+│  │  └─ scoring.py
 │  ├─ risk/
 │  │  ├─ account_policy.py
 │  │  ├─ position_limits.py
@@ -142,6 +176,10 @@ repo/
 │  │  ├─ sqlite_fts.py
 │  │  ├─ filters.py
 │  │  └─ corpus_builder.py
+│  ├─ notifier/
+│  │  ├─ schemas.py
+│  │  ├─ mock_notifier.py
+│  │  └─ chat_webhook.py
 │  └─ ai_costs/
 │     ├─ quotas.py
 │     ├─ estimators.py
@@ -163,6 +201,7 @@ repo/
 │  ├─ freeze_entries.py
 │  ├─ flatten_all.py
 │  ├─ emit_daily_report.py
+│  ├─ emit_operator_update.py
 │  └─ replay_event_packets.py
 ├─ data/
 │  ├─ parquet/
@@ -179,170 +218,200 @@ repo/
    ├─ integration/
    ├─ regression/
    └─ fixtures/
-```
 
-## Module responsibilities
 
-### `apps/collector`
-- Pull OHLCV and exchange metadata with CCXT.
-- Persist normalized market data to Parquet.
-- Run quality checks before publishing curated datasets.
-
-### `libs/strategy`
-- Pure deterministic strategy logic.
-- No network calls.
-- No filesystem writes except explicit snapshot serialization.
-- Single source of truth for regime, breakout, sizing, and stops.
-
-### `freqtrade/`
-- Execution adapter for backtest, dry-run, and live.
-- Calls into shared strategy logic.
-- Owns exchange order lifecycle.
-
-### `apps/supervisor` + `libs/risk`
-- Account-level limits.
-- Freeze/flatten controls.
-- Reconciliation with exchange balances and open positions.
-- Heartbeats and health checks.
-- Veto new entries when policy fails.
-
-### `libs/journal`
-- Append-only deterministic records for:
-  - signals
-  - orders
-  - fills
-  - balances
-  - config hash
-  - run ID
-  - supervisor actions
-  - human overrides
-
-### `libs/event_packets`
-- Compact schemas for machine-readable downstream events:
-  - fill
-  - reject
-  - partial fill
-  - stop hit
-  - data gap
-  - reconciliation mismatch
-  - restart
-  - risk freeze
-  - kill-switch activation
-
-### `apps/ai_router`
-- Only entrypoint for all model calls.
-- Enforces schema validation, prompt versioning, provider routing, quotas, caching hooks, and usage logging.
-- Rejects calls that violate mode, budget, or policy.
-
-### `libs/retrieval`
-- SQLite FTS5 index for mutable journals, summaries, incidents, and notes.
-- Metadata filters first, lexical retrieval second.
-- No managed retrieval service in v1.
-
-### `apps/report_jobs`
-- Nightly rollups.
-- Daily operator briefing.
-- Weekly review and premium escalation jobs.
-
-## Data flow
-
-### Deterministic live path
-```text
+   Module responsibilities
+apps/collector
+Pull OHLCV and exchange metadata with CCXT.
+Persist normalized market data to Parquet.
+Run quality checks before publishing curated datasets.
+libs/strategy
+Pure deterministic strategy logic.
+No network calls.
+No filesystem writes except explicit snapshot serialization.
+Single source of truth for deterministic regime, breakout, sizing, and stops.
+libs/decisioning + apps/decision_engine
+Build canonical decision inputs from market data, deterministic features, and configured context.
+Support deterministic and model-informed proposal generation.
+Validate proposal shape, confidence fields, timestamps, symbol eligibility, and stale-data rules.
+Emit structured trade proposals or no-trade decisions.
+Never place orders directly.
+Never bypass supervisor/risk modules.
+freqtrade/
+Execution adapter for backtest, dry-run, and future live.
+Calls into shared strategy/decisioning logic.
+Owns exchange order lifecycle.
+Must receive only validated and risk-approved intents.
+apps/supervisor + libs/risk
+Account-level limits.
+Allowed market/universe enforcement.
+Max exposure and max position-size enforcement.
+Drawdown limits.
+Freeze/flatten controls.
+Reconciliation with exchange balances and open positions.
+Heartbeats and health checks.
+Veto new entries when policy fails.
+libs/journal
+Append-only records for:
+market snapshots
+signal/proposal inputs
+signal/proposal outputs
+risk approvals and vetoes
+orders
+fills
+balances
+config hash
+run ID
+supervisor actions
+operator updates
+human overrides
+libs/event_packets
+Compact schemas for machine-readable downstream events:
+signal generated
+proposal generated
+proposal rejected
+risk veto
+fill
+reject
+partial fill
+stop hit
+data gap
+reconciliation mismatch
+restart
+risk freeze
+kill-switch activation
+operator update sent
+apps/ai_router
+Only entrypoint for all model calls.
+Enforces schema validation, prompt versioning, provider routing, quotas, caching hooks, and usage logging.
+Rejects calls that violate mode, budget, or policy.
+Supports model-informed analysis/proposal jobs only through named, versioned prompts and schemas.
+libs/retrieval
+SQLite FTS5 index for mutable journals, summaries, incidents, and notes.
+Metadata filters first, lexical retrieval second.
+No managed retrieval service in v1.
+libs/notifier
+Mock-safe notification interface.
+Optional chat/webhook delivery after manual wiring.
+No secrets committed.
+Delivery failures must not block execution, but must be logged.
+apps/report_jobs
+Nightly rollups.
+Daily operator briefing.
+Periodic paper-mode operator updates.
+Weekly review and premium escalation jobs.
+Data flow
+Paper autonomous path
 Exchange APIs
   -> collector (CCXT)
   -> Parquet / DuckDB
-  -> shared strategy logic
-  -> Freqtrade strategy adapter
+  -> deterministic features + market snapshots
+  -> decision_engine
+  -> deterministic and/or model-informed signal/proposal generation
+  -> proposal validation
   -> supervisor policy checks
-  -> order placement / cancellation
+  -> Freqtrade dry-run execution
+  -> paper fills / balances / reconciliation
+  -> journal + event packets + operator updates
+Future live path
+Exchange APIs
+  -> collector (CCXT)
+  -> Parquet / DuckDB
+  -> deterministic features + market snapshots
+  -> decision_engine
+  -> validated signal/proposal
+  -> deterministic risk governor
+  -> capped live Freqtrade execution
   -> fills / balances / reconciliation
-  -> journal + event packets + alerts
-```
+  -> journal + event packets + alerts + operator updates
 
-### AI advisory path
-```text
-journal + event packets + summaries + retrieval index
+Live mode is not enabled by default. It requires promotion checklist completion, restricted credentials, capped allocation, verified kill switches, and human sign-off.
+
+AI/model path
+market snapshots + deterministic features + journal + event packets + summaries + retrieval index
   -> ai_router
   -> cheap/default model OR premium model by policy
   -> structured outputs only
-  -> summaries / briefings / experiment cards / incident reviews
-```
-
-### Offline research path
-```text
+  -> signal/proposal artifacts OR summaries / briefings / experiment cards / incident reviews
+  -> journal + event packets
+Offline research path
 Parquet / DuckDB
   -> research scripts / vectorbt / walk-forward
   -> analysis artifacts
-  -> human-reviewed strategy changes
+  -> human-reviewed strategy or model changes
   -> config / code update
   -> paper promotion gate
   -> live promotion gate
-```
-
-## AI vs deterministic responsibilities
-
-### Deterministic responsibilities
-- Universe selection from config.
-- Regime state used by live strategy.
-- Trade entry and exit conditions.
-- Position sizing.
-- Stop placement logic.
-- Exchange connectivity.
-- Balance and position reconciliation.
-- Risk vetoes.
-- Kill switches.
-- Promotion gating.
-
-### AI responsibilities
-- Summarize deterministic outcomes.
-- Cluster recurring incidents.
-- Draft journal entries from event packets.
-- Produce daily briefings.
-- Produce weekly post-mortems.
-- Propose experiments from prior results.
-- Assist with offline research synthesis.
-
-### AI forbidden responsibilities
-- Create live trade signals.
-- Approve live orders.
-- Change live config.
-- Change risk thresholds.
-- Mutate leverage/sizing/universe/kill-switch values.
-- Access live exchange credentials in sandbox or experiment paths.
-
-## Live vs paper vs offline
-
-### Paper mode
-- Same deterministic strategy and supervisor as live.
-- Dry-run execution only.
-- Full journaling and event packet emission enabled.
-- AI advisory jobs allowed under paper quotas.
-
-### Live mode
-- Same code path as paper where possible.
-- Tighter config and risk caps.
-- AI remains advisory only.
-- Premium AI disabled by default unless explicitly approved for offline review only.
-
-### Offline mode
-- Research notebooks, walk-forward tests, incident analysis, model-assisted summaries, experiment design.
-- Can use premium AI within explicit quotas.
-- No exchange write path.
-
-## Storage model
-- Parquet: raw and curated market datasets.
-- DuckDB: analytics, walk-forward outputs, review queries.
-- SQLite: mutable operational state, retrieval corpus, AI usage ledger, task/job state.
-- Journals directory: append-only audit artifacts.
-- Summaries directory: AI-generated structured outputs and approved reports.
-
-## Red lines
-- No model call between deterministic signal generation and deterministic order execution.
-- No AI with unchecked live order authority.
-- No AI-generated change applied to live config or live code without explicit human review and merge.
-- No premium model as default for repetitive monitoring.
-- No continuous LLM loop in live execution.
-- No raw long-context replay during live operation when compact packets and retrieval suffice.
-- No managed vector DB or agent framework in v1.
-- No direct news/social-to-trade path.
-- If `apps/ai_router` is down, paper and live trading must still function correctly.
+AI/model vs deterministic responsibilities
+Deterministic responsibilities
+Config validation.
+Universe eligibility.
+Stale-data detection.
+Proposal schema validation.
+Position sizing bounds.
+Stop and risk bounds.
+Balance and position reconciliation.
+Risk vetoes.
+Kill switches.
+Freeze/flatten controls.
+Promotion gating.
+Audit logging.
+Model-informed/autonomous responsibilities
+Analyze configured market snapshots.
+Generate structured trade proposals or no-trade decisions.
+Explain decision rationale in bounded schema fields.
+Produce summaries and operator updates.
+Cluster recurring incidents.
+Draft journal summaries from event packets.
+Produce daily briefings.
+Produce weekly post-mortems.
+Propose experiments from prior results.
+Assist with offline research synthesis.
+Forbidden responsibilities
+Bypass deterministic risk validation.
+Approve its own live deployment.
+Change live config without human review.
+Change risk thresholds.
+Mutate leverage/sizing/universe/kill-switch values.
+Access live exchange credentials in sandbox, research, or offline experiment paths.
+Execute live wallet trades before explicit live promotion.
+Live vs paper vs offline
+Paper mode
+First proving ground.
+Dry-run execution only.
+Autonomous/model-informed decisions may be enabled if schema-validated and risk-checked.
+Full journaling and event packet emission enabled.
+Periodic bot/chat/report updates enabled.
+AI/model jobs allowed under paper quotas.
+Results must be reviewable from journals, packets, reports, and replay outputs.
+Live mode
+Later stage only.
+Same code path as paper where possible.
+Restricted credentials and small sandbox allocation.
+Tighter config and risk caps.
+Deterministic risk governor can veto, freeze, flatten, or kill execution.
+Autonomous/model-informed signals may be consumed only after promotion gates approve that mode.
+Premium AI disabled by default unless explicitly approved for offline review only.
+Offline mode
+Research notebooks, walk-forward tests, incident analysis, model-assisted summaries, experiment design.
+Can use premium AI within explicit quotas.
+No exchange write path.
+No wallet credentials.
+Storage model
+Parquet: raw and curated market datasets.
+DuckDB: analytics, walk-forward outputs, review queries.
+SQLite: mutable operational state, retrieval corpus, AI usage ledger, task/job state.
+Journals directory: append-only audit artifacts.
+Summaries directory: AI-generated structured outputs and approved reports.
+Prompt directory: versioned prompt assets.
+Red lines
+No unchecked model authority over live order execution.
+No order path that bypasses deterministic risk policy.
+No live trading before promotion checklist completion and human sign-off.
+No AI-generated change applied to live config or live code without explicit human review and merge.
+No premium model as default for repetitive monitoring.
+No uncontrolled continuous LLM loop in live execution.
+No raw long-context replay during live operation when compact packets and retrieval suffice.
+No managed vector DB or agent framework in v1.
+No direct news/social-to-trade path in v1.
+If apps/ai_router is down, deterministic-only paper/live-safe modes must fail closed or continue according to configured mode policy.

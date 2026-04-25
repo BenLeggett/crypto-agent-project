@@ -18,3 +18,11 @@
 - Updated `AGENTS.md` to require mock-first implementation for any feature blocked on secrets or personal credentials.
 - Updated `ARCHITECTURE.md`, `IMPLEMENTATION_PLAN.md`, and `TASK_QUEUE.md` only where needed to reference manual wiring and placeholder-based scaffolding.
 - Created `MANUAL_WIRING_CHECKLIST.md` as the referenced log for human-owned setup steps and secret-backed integrations.
+
+## 2026-04-25
+- Performed a second-pass alignment update to reflect the actual staged autonomous crypto trading bot goal.
+- Corrected docs that over-constrained the system to deterministic-only trading and AI-advisory-only behavior.
+- Preserved the deterministic risk governor, audit logging, replayability, kill switches, freeze/flatten controls, and promotion gates.
+- Updated the architecture and plan so autonomous/model-informed signal or proposal generation is allowed in paper mode and can only progress toward future small-capital live execution after explicit review and promotion criteria.
+- Added periodic bot/chat/report operator updates as a first-class paper-mode requirement.
+- Kept live wallet execution as a later anticipated phase, not an immediate default.
