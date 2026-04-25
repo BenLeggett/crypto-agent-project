@@ -1,0 +1,9 @@
+{
+  "dry_run": true,
+  "trading_mode": "spot",
+  "exchange": {
+    "name": "placeholder",
+    "key": "",
+    "secret": ""
+  }
+}

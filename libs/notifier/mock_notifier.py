@@ -1,0 +1,1 @@
+"""Mock notifier placeholders."""

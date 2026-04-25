@@ -1,0 +1,1 @@
+"""Daily operator briefing placeholders."""

@@ -1,0 +1,1 @@
+"""Notifier schema placeholders."""

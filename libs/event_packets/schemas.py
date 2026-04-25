@@ -1,0 +1,1 @@
+"""Event packet schema placeholders."""

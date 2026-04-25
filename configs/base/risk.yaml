@@ -1,0 +1,3 @@
+# Deterministic risk governor placeholder values.
+enabled: true
+live_execution_enabled: false

@@ -1,0 +1,1 @@
+"""AI router schema placeholders."""

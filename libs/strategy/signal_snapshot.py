@@ -1,0 +1,1 @@
+"""Signal snapshot placeholders."""

@@ -1,0 +1,1 @@
+"""Deterministic breakout signal placeholders."""

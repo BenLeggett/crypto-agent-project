@@ -1,0 +1,1 @@
+"""Event packet builder placeholders."""

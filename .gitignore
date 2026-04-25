@@ -1,0 +1,65 @@
+# Python caches and test artifacts
+__pycache__/
+*.py[cod]
+*$py.class
+.pytest_cache/
+.coverage
+htmlcov/
+
+# Local Python environments
+.venv/
+venv/
+env/
+ENV/
+
+# Local secrets and machine-specific environment files
+.env
+.env.*
+!.env.example
+
+# Logs and runtime process files
+*.log
+*.pid
+*.tmp
+*.bak
+
+# Market data, journals, summaries, and local databases are runtime artifacts.
+# Keep directory placeholders so the repo skeleton remains intact.
+data/parquet/*
+!data/parquet/.gitkeep
+data/duckdb/*
+!data/duckdb/.gitkeep
+data/sqlite/*
+!data/sqlite/.gitkeep
+data/journals/*
+!data/journals/.gitkeep
+data/summaries/*
+!data/summaries/.gitkeep
+
+# Versioned prompt assets are source-controlled; only ignore local scratch files.
+data/prompts/*.local.*
+
+# Freqtrade runtime outputs and generated local state
+freqtrade/user_data/logs/*
+!freqtrade/user_data/logs/.gitkeep
+freqtrade/user_data/backtest_results/
+freqtrade/user_data/data/
+freqtrade/user_data/hyperopt_results/
+freqtrade/user_data/*.sqlite
+freqtrade/user_data/*.sqlite-*
+
+# Notebook checkpoints and generated research scratch outputs
+.ipynb_checkpoints/
+notebooks/**/.ipynb_checkpoints/
+
+# Tooling and packaging outputs
+build/
+dist/
+*.egg-info/
+
+# IDE and OS noise
+.vscode/
+.idea/
+.DS_Store
+Thumbs.db
+Desktop.ini

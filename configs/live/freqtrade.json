@@ -1,0 +1,11 @@
+{
+  "dry_run": false,
+  "trading_mode": "spot",
+  "exchange": {
+    "name": "placeholder",
+    "key": "${EXCHANGE_API_KEY}",
+    "secret": "${EXCHANGE_API_SECRET}"
+  },
+  "live_execution_enabled": false,
+  "requires_promotion_marker": true
+}

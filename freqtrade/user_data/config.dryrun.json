@@ -1,0 +1,5 @@
+{
+  "dry_run": true,
+  "trading_mode": "spot",
+  "strategy": "regime_breakout_strategy"
+}

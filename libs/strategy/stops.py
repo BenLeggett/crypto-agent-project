@@ -1,0 +1,1 @@
+"""Deterministic stop calculation placeholders."""

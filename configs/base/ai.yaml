@@ -1,0 +1,4 @@
+# AI/model calls must route through apps/ai_router and remain mock-safe by default.
+provider: mock
+default_model_tier: cheap
+premium_enabled: false
