@@ -33,6 +33,13 @@ Install test dependencies in your preferred environment, then run:
 python -m pytest
 ```
 
+Optional market-data storage dependencies are only needed when writing real
+Parquet files or registering DuckDB analytics views:
+
+```bash
+python -m pip install -e ".[market-data]"
+```
+
 Useful targets:
 
 ```bash
@@ -81,4 +88,20 @@ Example command shape once Freqtrade is installed locally:
 ```bash
 make data-bootstrap ARGS="--symbols BTC/USDT ETH/USDT --timeframes 1h 4h --exchange binance"
 make data-update ARGS="--symbols BTC/USDT --timeframes 1h --days 7 --exchange binance"
+```
+
+`libs/market_data/storage.py` provides the project-owned storage boundary for
+raw and curated OHLCV datasets. It writes Parquet through `pyarrow` and
+registers queryable DuckDB views when the optional `market-data` extra is
+installed. Unit tests use fake backends, so storage behavior remains verifiable
+without external packages or secrets.
+
+`libs/market_data/normalization.py` and `libs/market_data/quality_checks.py`
+validate project-owned OHLCV datasets before curated promotion. They detect
+missing fields, duplicate timestamps, out-of-order rows, candle gaps, negative
+values, and malformed candle ranges. The local validation script can be run
+against a Parquet file when optional market-data dependencies are installed:
+
+```bash
+make data-validate ARGS="--path data/parquet/raw/ohlcv/BTC_USDT/1h.parquet"
 ```

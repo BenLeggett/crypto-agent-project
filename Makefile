@@ -1,4 +1,4 @@
-.PHONY: test test-unit smoke data-bootstrap data-update
+.PHONY: test test-unit smoke data-bootstrap data-update data-validate
 
 test:
 	python -m pytest
@@ -14,3 +14,6 @@ data-bootstrap:
 
 data-update:
 	python scripts/update_market_data.py $(ARGS)
+
+data-validate:
+	python scripts/validate_data.py $(ARGS)

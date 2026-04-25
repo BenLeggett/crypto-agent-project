@@ -81,3 +81,21 @@
 - Added Freqtrade-first `download-data` command construction and a command-runner boundary so bootstrap/update behavior can be tested without Freqtrade, network access, or credentials.
 - Wired bootstrap and incremental update scripts plus Make targets while preserving paper-first defaults and no live wallet behavior.
 - Added mocked unit tests for command construction, job overrides, update windows, validation failures, and command failures.
+
+## 2026-04-25
+- Implemented Task 7: market-data storage layer.
+- Added typed OHLCV dataset rows, deterministic Parquet output paths, and DuckDB table registration/query interfaces.
+- Kept `pyarrow` and `duckdb` as optional local dependencies and tested storage behavior through fake backends so no secrets, exchange access, or live execution wiring is required.
+- Added storage unit tests for row conversion, write/register/query flow, dataset validation, and safe default table naming.
+
+## 2026-04-25
+- Implemented Task 8: market-data normalization and quality checks.
+- Added deterministic OHLCV normalization plus checks for duplicate timestamps, out-of-order candles, gaps, malformed candle ranges, negative values, mixed datasets, and empty datasets.
+- Wired `scripts/validate_data.py` and a `make data-validate` target for local Parquet validation when optional market-data dependencies are installed.
+- Added mocked unit tests for normalization, quality failures, timeframe conversion, and validation script behavior.
+
+## 2026-04-25
+- Implemented Task 9: market-data test coverage pass.
+- Added a public API unit test that exercises Freqtrade command construction, OHLCV row conversion, normalization, and quality validation together.
+- Added a mocked integration test that flows CCXT OHLCV rows through validation, storage, DuckDB-style registration, query, re-normalization, and post-storage validation.
+- Kept the test path fully local and mock-backed with no exchange, Freqtrade, pyarrow, DuckDB, credentials, or live execution dependency.
