@@ -120,6 +120,7 @@ For non-trivial work, Codex must:
 6. Update docs when behavior or operations change.
 7. Explicitly separate what can be completed now from what remains blocked on secrets or personal information.
 8. Append any remaining secret-dependent setup steps to `docs/MANUAL_WIRING_CHECKLIST.md`.
+9. Record completed phase or milestone progress in `ACTIVITY.MD` so the audit timeline remains synchronized with canonical `docs/` state.
 
 ## Acceptance standard
 A task is complete only when:

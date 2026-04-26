@@ -147,3 +147,9 @@
 - Added regression coverage proving saved Freqtrade-style backtest metrics and walk-forward manifests are reproducible from fixed local inputs.
 - Preserved the research boundary: local artifacts only, no exchange credentials, no AI provider credentials, no notifier secrets, and no live wallet execution.
 - Updated README research notes with the Phase 4 test command.
+
+## 2026-04-26
+- Reached the end of Phase 8 with completion of Task 35: journal/event packet replay utility.
+- Confirmed `docs/PHASE_TASK_MAP.md` is authoritative for phase/task progress tracking and identified the activity log omission after Phase 4.
+- Noted the hole in `ACTIVITY.MD`: subsequent project progress through Phases 5-8 was tracked in canonical docs and implementation artifacts, but the activity log itself was not appended until now.
+- Added a corrective activity entry so the project log now reflects the current milestone and documents the oversight for future tracking discipline.
