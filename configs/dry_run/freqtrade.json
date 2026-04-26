@@ -1,9 +1,23 @@
 {
+  "config_path": "freqtrade/user_data/config.dryrun.json",
+  "user_data_dir": "freqtrade/user_data",
+  "strategy": "RegimeBreakoutStrategy",
   "dry_run": true,
   "trading_mode": "spot",
   "exchange": {
-    "name": "placeholder",
+    "name": "binance",
     "key": "",
     "secret": ""
+  },
+  "pairs": [
+    "BTC/USDT",
+    "ETH/USDT"
+  ],
+  "timeframes": [
+    "4h"
+  ],
+  "operator_surfaces": {
+    "telegram_enabled": false,
+    "web_ui_enabled": false
   }
 }

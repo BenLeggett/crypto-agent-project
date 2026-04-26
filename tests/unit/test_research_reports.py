@@ -44,7 +44,7 @@ def test_build_freqtrade_backtest_command_is_explicit_and_dry_run_based() -> Non
     assert "--config" in command
     assert str(Path("freqtrade/user_data/config.dryrun.json")) in command
     assert "--strategy" in command
-    assert "regime_breakout_strategy" in command
+    assert "RegimeBreakoutStrategy" in command
     assert "--timerange" in command
     assert "--export-filename" in command
 

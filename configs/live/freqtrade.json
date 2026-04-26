@@ -1,11 +1,30 @@
 {
+  "config_path": "freqtrade/user_data/config.live.json",
+  "user_data_dir": "freqtrade/user_data",
+  "strategy": "RegimeBreakoutStrategy",
   "dry_run": false,
   "trading_mode": "spot",
-  "exchange": {
-    "name": "placeholder",
-    "key": "${EXCHANGE_API_KEY}",
-    "secret": "${EXCHANGE_API_SECRET}"
-  },
   "live_execution_enabled": false,
-  "requires_promotion_marker": true
+  "requires_promotion_marker": true,
+  "requires_human_signoff": true,
+  "exchange": {
+    "name": "binance",
+    "key": "${EXCHANGE_API_KEY}",
+    "secret": "${EXCHANGE_API_SECRET}",
+    "passphrase": "${EXCHANGE_API_PASSPHRASE}"
+  },
+  "pairs": [
+    "BTC/USDT"
+  ],
+  "timeframes": [
+    "4h"
+  ],
+  "operator_surfaces": {
+    "telegram_enabled": false,
+    "telegram_token": "${FREQTRADE_TELEGRAM_TOKEN}",
+    "telegram_chat_id": "${FREQTRADE_TELEGRAM_CHAT_ID}",
+    "web_ui_enabled": false,
+    "api_username": "${FREQTRADE_API_USERNAME}",
+    "api_password": "${FREQTRADE_API_PASSWORD}"
+  }
 }

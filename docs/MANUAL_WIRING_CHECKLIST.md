@@ -78,3 +78,16 @@ Use this file for any setup Codex cannot complete without external secrets, pers
 - Manual steps for human: Complete paper-mode review, approve promotion checklist, create restricted credentials, allocate only the approved sandbox capital amount, disable unnecessary permissions where possible, and confirm rollback/kill-switch procedures.
 - Verification steps after wiring: Run config validation, read-only exchange connectivity check, reconciliation check, alert delivery test, and kill-switch drill before allowing any write-enabled live session.
 - Notes: This is a later-stage integration. Do not treat live wallet execution as available on day one.
+
+### Item
+- Status: `pending`
+- Area: Optional Freqtrade-native Telegram/Web UI controls
+- Reason human input is required: Freqtrade Telegram tokens, chat IDs, API usernames, and API passwords are external operator-owned credentials.
+- File(s): `.env`, `.env.example`, `configs/live/freqtrade.json`, `freqtrade/user_data/config.live.json`
+- Env var(s) / secret name(s): `FREQTRADE_TELEGRAM_TOKEN`, `FREQTRADE_TELEGRAM_CHAT_ID`, `FREQTRADE_API_USERNAME`, `FREQTRADE_API_PASSWORD`
+- Expected format: Provider-issued bot token and chat ID for Telegram; human-chosen username/password or secret-store values for Freqtrade Web UI/API.
+- Placeholder or mock already implemented: Dry-run and live templates keep Telegram and Web UI disabled by default; placeholders are present only for later manual wiring.
+- Validation / failure behavior if missing: Freqtrade-native operator surfaces remain disabled; project-owned reporting/notifier paths should continue to use mock-safe delivery until later phases.
+- Manual steps for human: Create approved non-production operator destinations, place values in local secret storage or `.env`, enable the relevant Freqtrade surface only after review, and test against a non-production channel/session.
+- Verification steps after wiring: Run a Freqtrade config check or local dry-run startup with the surface enabled, then send a non-production status/update check and confirm credentials are not committed.
+- Notes: Optional only. Do not use these credentials to imply live trading approval.

@@ -1,4 +1,4 @@
-.PHONY: test test-unit smoke data-bootstrap data-update data-validate
+.PHONY: test test-unit smoke data-bootstrap data-update data-validate freqtrade-backtest freqtrade-dryrun
 
 test:
 	python -m pytest
@@ -17,3 +17,9 @@ data-update:
 
 data-validate:
 	python scripts/validate_data.py $(ARGS)
+
+freqtrade-backtest:
+	python scripts/run_freqtrade_backtest.py $(ARGS)
+
+freqtrade-dryrun:
+	python scripts/run_freqtrade_dryrun.py $(ARGS)

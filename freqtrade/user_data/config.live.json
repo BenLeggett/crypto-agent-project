@@ -1,7 +1,57 @@
 {
+  "bot_name": "crypto-agent-live-gated",
+  "initial_state": "stopped",
   "dry_run": false,
+  "cancel_open_orders_on_exit": true,
   "trading_mode": "spot",
-  "strategy": "regime_breakout_strategy",
-  "live_execution_enabled": false,
-  "requires_promotion_marker": true
+  "margin_mode": "",
+  "timeframe": "4h",
+  "strategy": "RegimeBreakoutStrategy",
+  "max_open_trades": 1,
+  "stake_currency": "USDT",
+  "stake_amount": 25,
+  "tradable_balance_ratio": 0.1,
+  "fiat_display_currency": "USD",
+  "force_entry_enable": false,
+  "exchange": {
+    "name": "binance",
+    "key": "${EXCHANGE_API_KEY}",
+    "secret": "${EXCHANGE_API_SECRET}",
+    "ccxt_config": {
+      "enableRateLimit": true
+    },
+    "ccxt_async_config": {
+      "enableRateLimit": true
+    },
+    "pair_whitelist": [
+      "BTC/USDT"
+    ],
+    "pair_blacklist": []
+  },
+  "pairlists": [
+    {
+      "method": "StaticPairList"
+    }
+  ],
+  "telegram": {
+    "enabled": false,
+    "token": "${FREQTRADE_TELEGRAM_TOKEN}",
+    "chat_id": "${FREQTRADE_TELEGRAM_CHAT_ID}"
+  },
+  "api_server": {
+    "enabled": false,
+    "listen_ip_address": "127.0.0.1",
+    "listen_port": 8080,
+    "username": "${FREQTRADE_API_USERNAME}",
+    "password": "${FREQTRADE_API_PASSWORD}"
+  },
+  "internals": {
+    "process_throttle_secs": 5
+  },
+  "project_live_guardrails": {
+    "live_execution_enabled": false,
+    "requires_promotion_marker": true,
+    "requires_human_signoff": true,
+    "notes": "Template only. Do not use for live trading until promotion gates and manual wiring are complete."
+  }
 }

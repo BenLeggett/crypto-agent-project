@@ -196,3 +196,49 @@ prove fixed strategy snapshots replay to identical proposal records.
 ```bash
 python -m pytest tests/unit/test_decision_engine.py
 ```
+
+## Freqtrade Strategy Adapter
+
+`freqtrade/user_data/strategies/regime_breakout_strategy.py` now provides the
+Task 24 adapter surface between Freqtrade-style candle frames and the shared
+deterministic strategy/decisioning modules. It converts OHLCV rows into
+`libs.strategy` contracts, builds canonical strategy snapshots, and emits
+paper-mode proposal/no-trade records through the existing decision schema.
+
+The adapter is import-safe without Freqtrade installed, so local tests can run
+with mocked/pandas candle frames and no exchange credentials:
+
+```bash
+python -m pytest tests/unit/test_freqtrade_strategy_adapter.py
+```
+
+Freqtrade entry columns remain disabled by default until the later supervisor
+and deterministic risk-governor integration can approve intents before dry-run
+or future live execution. Live wallet execution is still not approved or wired.
+
+## Freqtrade Configs And Wrappers
+
+Task 25 adds dry-run-first Freqtrade config templates plus explicit wrapper
+commands for local backtesting and paper-mode dry-run startup. The wrappers call
+Freqtrade directly, without shell interpolation, and reject live config paths.
+
+```bash
+make freqtrade-backtest ARGS="--timerange 20240101-20240201 --timeframe 4h"
+make freqtrade-dryrun
+```
+
+These commands require Freqtrade to be installed locally when actually run.
+Unit tests validate the command shape with fakes, so no exchange credentials,
+wallet keys, Telegram token, Web UI password, or live account data are required
+for repository validation.
+
+The live Freqtrade template remains a future gated path only: it is not the
+default, starts stopped, uses placeholders, keeps optional operator surfaces
+disabled, and is not accepted by the Task 25 wrappers.
+
+Phase 6 integration coverage verifies the adapter, dry-run config, and wrapper
+command boundaries together with local fixtures and fake runners:
+
+```bash
+python -m pytest tests/integration/test_freqtrade_adapter.py
+```

@@ -15,31 +15,17 @@ from decimal import Decimal, InvalidOperation, ROUND_HALF_UP
 from pathlib import Path
 from typing import Any, Mapping, Optional, Sequence
 
+from apps.research.freqtrade_commands import (
+    FreqtradeBacktestCommandRequest as FreqtradeBacktestRequest,
+    build_freqtrade_backtest_command,
+)
+
 
 RESEARCH_REPORT_SCHEMA_VERSION = "research_backtest_metrics.v1"
 
 
 class ResearchReportError(RuntimeError):
     """Raised when a research report cannot be loaded or generated."""
-
-
-@dataclass(frozen=True)
-class FreqtradeBacktestRequest:
-    """Explicit command shape for framework-backed research backtests."""
-
-    config_path: Path = Path("freqtrade/user_data/config.dryrun.json")
-    user_data_dir: Path = Path("freqtrade/user_data")
-    strategy: str = "regime_breakout_strategy"
-    command: str = "freqtrade"
-    timerange: Optional[str] = None
-    timeframe: Optional[str] = None
-    export_filename: Optional[Path] = None
-
-    def __post_init__(self) -> None:
-        if not self.command:
-            raise ValueError("command is required")
-        if not self.strategy:
-            raise ValueError("strategy is required")
 
 
 @dataclass(frozen=True)
@@ -88,30 +74,6 @@ class BacktestEvaluation:
             "metrics": [metric.to_record() for metric in self.metrics],
             "notes": self.notes,
         }
-
-
-def build_freqtrade_backtest_command(request: FreqtradeBacktestRequest) -> tuple[str, ...]:
-    """Build a Freqtrade backtesting command without running it."""
-
-    command = [
-        request.command,
-        "backtesting",
-        "--config",
-        str(request.config_path),
-        "--userdir",
-        str(request.user_data_dir),
-        "--strategy",
-        request.strategy,
-        "--export",
-        "trades",
-    ]
-    if request.timerange:
-        command.extend(["--timerange", request.timerange])
-    if request.timeframe:
-        command.extend(["--timeframe", request.timeframe])
-    if request.export_filename:
-        command.extend(["--export-filename", str(request.export_filename)])
-    return tuple(command)
 
 
 def load_backtest_json(path: Path) -> Mapping[str, Any]:
