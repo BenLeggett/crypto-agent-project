@@ -141,3 +141,9 @@
 - Added fixed market-data fixtures for daily regime classification and 4h breakout snapshot construction.
 - Added a fixture-backed test covering universe selection, regime classification, breakout entry, stop planning, position sizing, and serialized snapshot determinism.
 - Updated README strategy notes so the maintainer can run and inspect the completed Phase 3 strategy test surface without secrets or live execution wiring.
+
+## 2026-04-26
+- Completed Phase 4 research harness coverage through Task 19.
+- Added regression coverage proving saved Freqtrade-style backtest metrics and walk-forward manifests are reproducible from fixed local inputs.
+- Preserved the research boundary: local artifacts only, no exchange credentials, no AI provider credentials, no notifier secrets, and no live wallet execution.
+- Updated README research notes with the Phase 4 test command.

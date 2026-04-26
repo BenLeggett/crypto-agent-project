@@ -1,0 +1,126 @@
+{
+  "decision_input": {
+    "allowed_symbols": [
+      "BTC/USDT"
+    ],
+    "config_hash": "config-sha",
+    "created_at_ms": 1700000000000,
+    "decision_id": "decision-d7216dcd51ba99af",
+    "market": {
+      "ask_price": null,
+      "bid_price": null,
+      "features": {
+        "entry_action": "enter",
+        "exit_action": "hold",
+        "regime": "bull"
+      },
+      "mark_price": "105",
+      "schema_version": "market_snapshot.v1",
+      "snapshot_id": "market-d7216dcd51ba99af",
+      "source": "strategy_snapshot",
+      "symbol": "BTC/USDT",
+      "timeframe": "4h",
+      "timestamp_ms": 1700000000000
+    },
+    "max_market_age_ms": 300000,
+    "metadata": {
+      "strategy_snapshot_schema": "strategy_snapshot.v1"
+    },
+    "mode": "paper",
+    "run_id": "run-1",
+    "schema_version": "decision_input.v1",
+    "source": "deterministic",
+    "strategy_snapshot": {
+      "config_hash": "config-sha",
+      "entry": {
+        "action": "enter",
+        "metadata": {},
+        "reason": "breakout above prior range",
+        "side": "long",
+        "strength": "0.75",
+        "timestamp_ms": 1700000000000
+      },
+      "exit": {
+        "action": "hold",
+        "metadata": {},
+        "reason": "no exit",
+        "side": null,
+        "strength": "0",
+        "timestamp_ms": 1700000000000
+      },
+      "metadata": {
+        "latest_close": "105",
+        "run_id": "run-1",
+        "schema_version": "strategy_snapshot.v1"
+      },
+      "position_size": {
+        "metadata": {},
+        "notional": "262.5",
+        "quantity": "2.5",
+        "reason": "risk-budget size",
+        "risk_amount": "12.5",
+        "side": "long",
+        "symbol": "BTC/USDT"
+      },
+      "regime": {
+        "as_of_ms": 1700000000000,
+        "confidence": "0.8",
+        "label": "bull",
+        "metadata": {},
+        "reason": "bull regime"
+      },
+      "schema_version": "strategy_snapshot.v1",
+      "sizing_input": {
+        "entry_price": "105",
+        "equity": "1E+4",
+        "max_position_value": "5E+3",
+        "risk_fraction": "0.01",
+        "side": "long",
+        "stop_price": "1E+2",
+        "symbol": "BTC/USDT"
+      },
+      "stop_plan": {
+        "metadata": {},
+        "reason": "range stop",
+        "side": "long",
+        "stop_price": "1E+2",
+        "symbol": "BTC/USDT",
+        "take_profit_price": "115",
+        "trailing_distance": null
+      },
+      "symbol": "BTC/USDT",
+      "timeframe": "4h",
+      "timestamp_ms": 1700000000000
+    }
+  },
+  "output": {
+    "action": "enter",
+    "confidence": "0.75",
+    "created_at_ms": 1700000000000,
+    "decision_id": "decision-d7216dcd51ba99af",
+    "entry_price": "105",
+    "metadata": {
+      "config_hash": "config-sha",
+      "regime": "bull",
+      "strategy_snapshot_schema": "strategy_snapshot.v1"
+    },
+    "mode": "paper",
+    "notional": "262.5",
+    "order_type": "limit",
+    "proposal_id": "proposal-d7216dcd51ba99af",
+    "quantity": "2.5",
+    "rationale": "breakout above prior range",
+    "risk_tags": [
+      "requires_supervisor_review",
+      "deterministic_snapshot"
+    ],
+    "run_id": "run-1",
+    "schema_version": "trade_proposal.v1",
+    "side": "long",
+    "source": "deterministic",
+    "stop_loss_price": "100",
+    "symbol": "BTC/USDT",
+    "take_profit_price": "115",
+    "valid_until_ms": 1700000060000
+  }
+}

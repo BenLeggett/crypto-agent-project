@@ -65,6 +65,11 @@ def test_split_validation_rejects_overlapping_train_and_test_windows(tmp_path: P
         WalkForwardSplit("bad", "2024-01-01", "2024-02-15", "2024-02-01", "2024-02-29", tmp_path / "x.json")
 
 
+def test_split_validation_rejects_invalid_date_values(tmp_path: Path) -> None:
+    with pytest.raises(ValueError, match="invalid date value"):
+        WalkForwardSplit("bad", "2024-01-01", "not-a-date", "2024-02-01", "2024-02-29", tmp_path / "x.json")
+
+
 def test_parse_split_spec_builds_typed_split() -> None:
     split = parse_split_spec("fold1,results.json,20240101,20240131,20240201,20240229")
 

@@ -150,3 +150,49 @@ emits a single metrics artifact:
 ```bash
 python scripts/run_walkforward.py --backtest-result path/to/backtest-result.json --output-dir data/summaries/research
 ```
+
+Phase 4 research tests are fully local and fixture-backed:
+
+```bash
+python -m pytest tests/unit/test_research_reports.py tests/unit/test_walkforward.py tests/regression/test_research_metrics.py
+```
+
+## Decision Schema Boundary
+
+`libs/decisioning/schemas.py` defines the first Phase 5 machine-readable
+boundary for autonomous paper decisioning: market snapshots, decision inputs,
+trade proposals, no-trade decisions, and proposal rejections. These records are
+typed, versioned, serializable, and intentionally cannot place orders. Any
+proposal from deterministic or future model-informed logic must still pass
+deterministic validation and later supervisor/risk checks before paper
+execution.
+
+Schema tests run locally without secrets:
+
+```bash
+python -m pytest tests/unit/test_decision_schemas.py
+```
+
+The deterministic proposal builder converts pure strategy snapshots into
+canonical proposal or no-trade records only. It does not place orders; proposals
+remain subject to deterministic validation and later supervisor/risk checks.
+
+```bash
+python -m pytest tests/unit/test_deterministic_proposal_builder.py
+```
+
+Task 22 adds explicit proposal validation reports for stale market snapshots,
+expired proposals, out-of-universe symbols, and proposal-level size bounds. This
+is a fail-closed pre-risk boundary only; the supervisor remains authoritative for
+account-level hard constraints before paper or future live execution.
+
+```bash
+python -m pytest tests/unit/test_decision_validation.py
+```
+
+Decision-engine replay fixtures live under `tests/fixtures/decisioning/` and
+prove fixed strategy snapshots replay to identical proposal records.
+
+```bash
+python -m pytest tests/unit/test_decision_engine.py
+```

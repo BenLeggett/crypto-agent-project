@@ -1,0 +1,62 @@
+{
+  "config_hash": "config-sha",
+  "entry": {
+    "action": "enter",
+    "metadata": {},
+    "reason": "breakout above prior range",
+    "side": "long",
+    "strength": "0.75",
+    "timestamp_ms": 1700000000000
+  },
+  "exit": {
+    "action": "hold",
+    "metadata": {},
+    "reason": "no exit",
+    "side": null,
+    "strength": "0",
+    "timestamp_ms": 1700000000000
+  },
+  "metadata": {
+    "latest_close": "105",
+    "run_id": "run-1",
+    "schema_version": "strategy_snapshot.v1"
+  },
+  "position_size": {
+    "metadata": {},
+    "notional": "262.5",
+    "quantity": "2.5",
+    "reason": "risk-budget size",
+    "risk_amount": "12.5",
+    "side": "long",
+    "symbol": "BTC/USDT"
+  },
+  "regime": {
+    "as_of_ms": 1700000000000,
+    "confidence": "0.8",
+    "label": "bull",
+    "metadata": {},
+    "reason": "bull regime"
+  },
+  "schema_version": "strategy_snapshot.v1",
+  "sizing_input": {
+    "entry_price": "105",
+    "equity": "1E+4",
+    "max_position_value": "5E+3",
+    "risk_fraction": "0.01",
+    "side": "long",
+    "stop_price": "1E+2",
+    "symbol": "BTC/USDT"
+  },
+  "stop_plan": {
+    "metadata": {},
+    "reason": "range stop",
+    "side": "long",
+    "stop_price": "1E+2",
+    "symbol": "BTC/USDT",
+    "take_profit_price": "115",
+    "trailing_distance": null
+  },
+  "symbol": "BTC/USDT",
+  "timeframe": "4h",
+  "timestamp_ms": 1700000000000
+}
