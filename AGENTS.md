@@ -132,3 +132,6 @@ A task is complete only when:
 - autonomous/model-informed outputs are structured and policy-checked,
 - live execution remains gated and not enabled by default,
 - secret-dependent integrations are left as documented human wiring points rather than blockers.
+
+## Additional Standing rule:
+- When a milestone or phase is completed, update README.md and the relevant docs so the primary maintainer can understand how to run, inspect, and modify the system.

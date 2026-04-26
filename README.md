@@ -105,3 +105,16 @@ against a Parquet file when optional market-data dependencies are installed:
 ```bash
 make data-validate ARGS="--path data/parquet/raw/ohlcv/BTC_USDT/1h.parquet"
 ```
+
+## Deterministic Strategy Library
+
+`libs/strategy/` contains the shared pure strategy core for universe selection,
+daily regime classification, 4h breakout signals, sizing, stops, and canonical
+signal snapshots. These modules do not call exchanges, Freqtrade runtime,
+models, notifiers, wallets, or the filesystem during strategy evaluation.
+
+Fixture-backed strategy tests can be run locally without secrets:
+
+```bash
+python -m pytest tests/unit/test_strategy_fixture_determinism.py
+```

@@ -99,3 +99,45 @@
 - Added a public API unit test that exercises Freqtrade command construction, OHLCV row conversion, normalization, and quality validation together.
 - Added a mocked integration test that flows CCXT OHLCV rows through validation, storage, DuckDB-style registration, query, re-normalization, and post-storage validation.
 - Kept the test path fully local and mock-backed with no exchange, Freqtrade, pyarrow, DuckDB, credentials, or live execution dependency.
+
+## 2026-04-25
+- Implemented Task 10: shared deterministic strategy interfaces.
+- Added immutable typed contracts for candles, market series, strategy context, regime assessments, entry and exit signals, sizing inputs, position sizes, stop plans, and canonical strategy snapshots.
+- Added protocol boundaries for regime classifiers, entry/exit signal generators, stop planners, position sizers, and snapshot builders.
+- Kept the strategy interface layer pure, framework-neutral, and free of exchange, AI, notifier, wallet, filesystem, or live-execution side effects.
+
+## 2026-04-25
+- Implemented Task 11: deterministic universe selection.
+- Added config-driven universe selection contracts and a pure selector that preserves configured order while applying denylist, duplicate, quote-asset, metadata, activity, min-notional, and max-count filters.
+- Added stable rejection reasons so later decisioning, reporting, journaling, and risk layers can explain why configured symbols were excluded.
+- Kept universe selection local and side-effect free with no exchange, Freqtrade runtime, model, notifier, wallet, or secret dependency.
+
+## 2026-04-25
+- Implemented Task 12: deterministic daily regime filter.
+- Added a moving-average and slope based classifier that emits the shared `RegimeAssessment` contract for bull, bear, range, and unknown regimes.
+- Added stable regime metrics and metadata so later signal snapshots, decisioning, reporting, and replay paths can inspect the classification inputs.
+- Kept regime logic pure and deterministic with no exchange, Freqtrade runtime, AI, notifier, wallet, filesystem, or secret dependency.
+
+## 2026-04-25
+- Implemented Task 13: deterministic breakout signal module.
+- Added a 4h breakout/trend signal generator that emits shared `EntrySignal` and `ExitSignal` contracts from provided market series and regime assessments.
+- Added stable breakout metrics and metadata for prior range, close position, and momentum so later snapshots, decisioning, reporting, and replay paths can inspect signal inputs.
+- Kept breakout logic pure and deterministic with no order placement, exchange access, Freqtrade runtime, AI, notifier, wallet, filesystem, or secret dependency.
+
+## 2026-04-25
+- Implemented Task 14: deterministic sizing and stop modules.
+- Added risk-budget and max-notional based position sizing that emits the shared `PositionSize` contract and preserves sizing intermediates for later snapshots, decisioning, reporting, and replay.
+- Added bounded range-stop planning that emits the shared `StopPlan` contract for long and short entries with configured min/max stop distances, take-profit multiples, and optional trailing distance.
+- Kept sizing and stop logic pure and deterministic with no order placement, exchange access, Freqtrade runtime, AI, notifier, wallet, filesystem, or secret dependency.
+
+## 2026-04-25
+- Implemented Task 15: canonical deterministic signal snapshot schema and builder.
+- Added a pure snapshot builder that composes regime, entry, exit, stop, sizing input, and position-size outputs into the shared `StrategySnapshot` contract.
+- Added a versioned machine-readable snapshot serializer for later journaling, replay, decisioning, reporting, and Freqtrade adapter use.
+- Kept snapshot construction local and deterministic with no order placement, exchange access, Freqtrade runtime, AI, notifier, wallet, filesystem, or secret dependency.
+
+## 2026-04-25
+- Implemented Task 16: deterministic strategy unit-test fixture pass.
+- Added fixed market-data fixtures for daily regime classification and 4h breakout snapshot construction.
+- Added a fixture-backed test covering universe selection, regime classification, breakout entry, stop planning, position sizing, and serialized snapshot determinism.
+- Updated README strategy notes so the maintainer can run and inspect the completed Phase 3 strategy test surface without secrets or live execution wiring.
