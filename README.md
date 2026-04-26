@@ -118,3 +118,35 @@ Fixture-backed strategy tests can be run locally without secrets:
 ```bash
 python -m pytest tests/unit/test_strategy_fixture_determinism.py
 ```
+
+## Research Helpers
+
+`apps/research/reports.py` can turn saved Freqtrade backtest JSON into a
+versioned project metrics artifact for later evaluation and promotion review.
+This does not run live trading, does not require credentials, and does not treat
+backtest profitability as live approval.
+
+Example after producing a local Freqtrade backtest export:
+
+```bash
+python -m apps.research.main backtest-report --input path/to/backtest-result.json --output-dir data/summaries/research
+```
+
+The walk-forward wrapper can evaluate multiple saved backtest result files as
+explicit train/test splits and writes a versioned run manifest plus per-split
+metric artifacts:
+
+```bash
+python scripts/run_walkforward.py \
+  --split fold1,path/to/fold1-backtest.json,2024-01-01,2024-01-31,2024-02-01,2024-02-29 \
+  --split fold2,path/to/fold2-backtest.json,2024-03-01,2024-03-31,2024-04-01,2024-04-30 \
+  --output-dir data/summaries/research \
+  --run-id wf_local_review
+```
+
+For one saved backtest file without split metadata, the compatibility path still
+emits a single metrics artifact:
+
+```bash
+python scripts/run_walkforward.py --backtest-result path/to/backtest-result.json --output-dir data/summaries/research
+```
