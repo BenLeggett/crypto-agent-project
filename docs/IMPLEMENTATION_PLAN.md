@@ -156,6 +156,9 @@ The business objective is profitable trading, but profitability is an optimizati
 - Supervisor can freeze entries and flatten positions by command or policy.
 - Reconciliation mismatches are detected and logged.
 - Risk governor behavior is deterministic and test-backed.
+- Phase 7 logging means structured JSON-compatible records and mock-safe alert
+  delivery results; durable append-only journals, event packets, and replay are
+  Phase 8 deliverables.
 
 ## Phase 8 - Journaling and event packets
 

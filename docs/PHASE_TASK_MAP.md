@@ -176,7 +176,7 @@ It does not rewrite the project, change goals, reorder tasks, or broaden scope. 
 ### Phase exit checklist
 - Risk policy, supervisor service, health checks, freeze, flatten, kill switch, reconciliation, and alert hooks are present.
 - Risk rule, freeze/flatten, reconciliation, and degraded-health tests are present and passing.
-- Acceptance criteria reviewed: supervisor can veto entries, freeze entries, trigger flatten workflows, detect reconciliation mismatches, and log deterministic risk decisions.
+- Acceptance criteria reviewed: supervisor can veto entries, freeze entries, trigger flatten workflows, detect reconciliation mismatches, and emit structured JSON-compatible records for deterministic risk decisions and mock-safe alert hooks. Append-only journals and event packets are Phase 8 deliverables.
 - Manual wiring is optional; real alert channels may remain mocked until later validation.
 
 ---

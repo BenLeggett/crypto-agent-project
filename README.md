@@ -242,3 +242,111 @@ command boundaries together with local fixtures and fake runners:
 ```bash
 python -m pytest tests/integration/test_freqtrade_adapter.py
 ```
+
+## Deterministic Risk Policy
+
+Task 27 adds the first account-level deterministic risk policy in `libs/risk/`.
+It evaluates structured trade proposals against allowed markets, entry freeze
+state, kill switch state, drawdown limits, max order notional, per-symbol
+exposure, and total exposure. The policy returns versioned allow/veto records
+with stable reasons and does not place orders, call exchanges, read secrets, or
+enable live execution.
+
+Risk policy tests run locally without credentials:
+
+```bash
+python -m pytest tests/unit/test_risk_policy.py
+```
+
+## Supervisor Service
+
+Task 28 adds the supervisor service foundation in `apps/supervisor/`. It wraps
+the deterministic risk policy, evaluates structured paper-mode proposals,
+reports supervisor health, and treats entry freeze, drawdown breaches, and kill
+switch state as machine-readable operational status. It still does not place
+orders, call exchanges, read secrets, flatten positions, or enable live
+execution.
+
+Supervisor tests run locally without credentials:
+
+```bash
+python -m pytest tests/unit/test_supervisor_service.py
+```
+
+## Freeze And Kill-Switch Controls
+
+Task 29 adds deterministic supervisor controls for freezing entries, activating
+the kill switch, and requesting flatten workflows. These controls emit
+structured records only. They do not place orders, contact exchanges, wire
+Freqtrade runtime commands, use wallet credentials, or enable live execution.
+
+Local command examples:
+
+```bash
+python scripts/freeze_entries.py --reason "paper drawdown review"
+python scripts/flatten_all.py --reason "paper safety drill"
+```
+
+Freeze and flatten control tests run locally without secrets:
+
+```bash
+python -m pytest tests/unit/test_freeze_controls.py
+```
+
+## Supervisor Alert Boundary
+
+Phase 7 alert hooks live in `apps/supervisor/alerts.py`. They convert risk
+vetoes, degraded/stopped health, entry freezes, kill-switch activation,
+non-executing flatten requests, and reconciliation mismatches into versioned
+JSON-compatible records. The default sink is an in-memory mock, and delivery
+failures return structured delivery records instead of blocking supervisor,
+risk, freeze, flatten, or reconciliation flow.
+
+These hooks are intentionally local and pluggable. Real webhook, bot, chat, or
+Freqtrade-native operator delivery remains a later manual wiring point and is
+not required for Phase 7 validation.
+
+```bash
+python -m pytest tests/unit/test_supervisor_alerts.py
+```
+
+## Reconciliation Flow
+
+Task 30 adds deterministic reconciliation for comparing internal account state
+against externally supplied account snapshots. The comparator classifies balance
+and position mismatches and emits a versioned JSON report. It does not fetch
+exchange data, read credentials, repair state, place orders, or enable live
+execution.
+
+Local command shape:
+
+```bash
+python scripts/reconcile_positions.py \
+  --internal-snapshot path/to/internal_snapshot.json \
+  --external-snapshot path/to/external_snapshot.json
+```
+
+Without snapshot files the command compares empty mock snapshots, which is only
+useful as a local smoke check.
+
+Reconciliation tests run locally without secrets:
+
+```bash
+python -m pytest tests/unit/test_reconciliation.py
+```
+
+## Phase 7 Supervisor Validation
+
+Task 31 adds integration coverage across the deterministic supervisor stack:
+policy vetoes, entry freeze, kill switch, non-executing flatten requests,
+reconciliation mismatches, degraded-health paths, and mock-safe alert records.
+When Phase 7 says supervisor decisions are "logged," that means structured
+JSON-compatible records and mock delivery results. Phase 8 adds the append-only
+journal writer, event packet schemas, and replay utility that turn those records
+into durable audit streams. The tests use local typed records only and do not
+require exchange credentials, notifier credentials, Freqtrade runtime access,
+wallet access, or live execution.
+
+```bash
+python -m pytest tests/integration/test_supervisor.py tests/unit/test_supervisor_alerts.py
+```
