@@ -12,6 +12,8 @@ from typing import Any
 
 from apps.supervisor.health import HealthStatus, SupervisorHealth, build_supervisor_health
 from libs.decisioning.schemas import TradeProposal
+from libs.event_packets import EventPacket, build_risk_decision_packet
+from libs.journal import JournalRecord, JournalRecordType
 from libs.risk import AccountRiskLimits, AccountRiskPolicy, AccountRiskState, FreezeState, RiskPolicyDecision
 
 SUPERVISOR_EVALUATION_SCHEMA_VERSION = "supervisor_policy_evaluation.v1"
@@ -23,6 +25,7 @@ class SupervisorConfig:
 
     account_limits: AccountRiskLimits
     service_name: str = "supervisor"
+    config_hash: str = "supervisor-local"
     risk_enabled: bool = True
 
     def __post_init__(self) -> None:
@@ -30,6 +33,8 @@ class SupervisorConfig:
             raise TypeError("account_limits must be an AccountRiskLimits")
         if not self.service_name.strip():
             raise ValueError("service_name must be non-empty")
+        if not self.config_hash.strip():
+            raise ValueError("config_hash must be non-empty")
         if not self.risk_enabled:
             raise ValueError("deterministic risk governor must remain enabled")
 
@@ -75,6 +80,22 @@ class SupervisorEvaluation:
         }
 
 
+@dataclass(frozen=True)
+class SupervisorAuditArtifacts:
+    """Local audit artifacts emitted by a supervisor evaluation."""
+
+    evaluation: SupervisorEvaluation
+    journal_records: tuple[JournalRecord, ...]
+    event_packets: tuple[EventPacket, ...]
+
+    def to_record(self) -> dict[str, Any]:
+        return {
+            "evaluation": self.evaluation.to_record(),
+            "journal_records": [record.to_record() for record in self.journal_records],
+            "event_packets": [packet.to_record() for packet in self.event_packets],
+        }
+
+
 class SupervisorService:
     """Evaluate proposals through the deterministic account risk policy."""
 
@@ -101,6 +122,15 @@ class SupervisorService:
             accepted=accepted,
         )
 
+    def evaluate_proposal_with_audit(
+        self,
+        proposal: TradeProposal,
+        state: AccountRiskState,
+    ) -> SupervisorAuditArtifacts:
+        """Evaluate a proposal and build local journal/packet artifacts."""
+
+        return self.audit_evaluation(self.evaluate_proposal(proposal, state))
+
     def evaluate_proposal_with_controls(
         self,
         proposal: TradeProposal,
@@ -111,6 +141,16 @@ class SupervisorService:
 
         return self.evaluate_proposal(proposal, account_state_with_controls(state, controls))
 
+    def evaluate_proposal_with_controls_and_audit(
+        self,
+        proposal: TradeProposal,
+        state: AccountRiskState,
+        controls: FreezeState,
+    ) -> SupervisorAuditArtifacts:
+        """Evaluate a proposal with controls and build local audit artifacts."""
+
+        return self.audit_evaluation(self.evaluate_proposal_with_controls(proposal, state, controls))
+
     def health(self, state: AccountRiskState) -> SupervisorHealth:
         """Evaluate local supervisor health from deterministic state."""
 
@@ -118,6 +158,41 @@ class SupervisorService:
             state=state,
             limits=self.config.account_limits,
             policy_loaded=True,
+        )
+
+    def audit_evaluation(self, evaluation: SupervisorEvaluation) -> SupervisorAuditArtifacts:
+        """Build journal records and packets for an existing evaluation."""
+
+        if not isinstance(evaluation, SupervisorEvaluation):
+            raise TypeError("evaluation must be a SupervisorEvaluation")
+
+        risk_record = evaluation.risk_decision.to_record()
+        journal_record = JournalRecord(
+            record_id=f"risk-decision-{evaluation.run_id}-{evaluation.decision_id}",
+            run_id=evaluation.run_id,
+            created_at_ms=_risk_decision_created_at_ms(evaluation.risk_decision),
+            record_type=JournalRecordType.RISK_DECISION,
+            source=self.config.service_name,
+            config_hash=self.config.config_hash,
+            payload=evaluation.to_record(),
+            metadata={
+                "proposal_id": evaluation.proposal_id,
+                "accepted": str(evaluation.accepted).lower(),
+                "primary_reason": evaluation.risk_decision.primary_reason,
+            },
+        )
+        packet = build_risk_decision_packet(
+            run_id=evaluation.run_id,
+            decision_id=evaluation.decision_id,
+            occurred_at_ms=_risk_decision_created_at_ms(evaluation.risk_decision),
+            risk_decision=risk_record,
+            allowed=evaluation.accepted,
+            source=self.config.service_name,
+        )
+        return SupervisorAuditArtifacts(
+            evaluation=evaluation,
+            journal_records=(journal_record,),
+            event_packets=(packet,),
         )
 
 
@@ -142,8 +217,14 @@ def account_state_with_controls(state: AccountRiskState, controls: FreezeState) 
     )
 
 
+def _risk_decision_created_at_ms(decision: RiskPolicyDecision) -> int:
+    value = decision.metadata.get("created_at_ms", "")
+    return int(value) if value else 0
+
+
 __all__ = [
     "SUPERVISOR_EVALUATION_SCHEMA_VERSION",
+    "SupervisorAuditArtifacts",
     "SupervisorConfig",
     "SupervisorEvaluation",
     "SupervisorService",

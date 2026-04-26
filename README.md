@@ -350,3 +350,81 @@ wallet access, or live execution.
 ```bash
 python -m pytest tests/integration/test_supervisor.py tests/unit/test_supervisor_alerts.py
 ```
+
+## Append-Only Journal Foundation
+
+Task 32 adds the local audit record schema and append-only JSONL writer in
+`libs/journal/`. `JournalRecord` validates run IDs, millisecond timestamps,
+record types, source names, config hashes, metadata, and JSON-serializable
+payloads before anything is written. `JournalWriter` creates local parent
+directories, appends one compact JSON object per line, and returns write
+metadata including line number, byte offset, and content hash.
+
+This is local filesystem journaling only. It does not call exchanges, models,
+webhooks, wallets, or Freqtrade, and it does not enable live execution. Later
+Phase 8 tasks add event packet schemas, integration wiring from decisioning and
+supervisor flows, and replay utilities.
+
+```bash
+python -m pytest tests/unit/test_journal_writer.py
+```
+
+## Event Packet Foundation
+
+Task 33 adds compact, versioned event packet schemas, builders, and serializers
+in `libs/event_packets/`. Packets cover proposal generated/rejected events,
+risk decisions and vetoes, fills, order rejects, restarts, risk freezes,
+kill-switch activation, and reconciliation mismatches. They serialize to
+deterministic JSON or JSONL lines for later reporting, retrieval, and replay.
+
+This task only defines packet records and pure builders. It does not emit
+packets from decisioning, supervisor, Freqtrade, or execution paths yet, and it
+does not write journals or enable live execution. Runtime wiring is a later
+Phase 8 task.
+
+```bash
+python -m pytest tests/unit/test_event_packets.py
+```
+
+## Audit Wiring Foundation
+
+Task 34 wires the journal and event-packet primitives into the current local
+decisioning, supervisor, reconciliation, control, and Freqtrade adapter
+surfaces. Decision results now produce proposal input/output journal records
+and proposal packets. Supervisor evaluations produce risk-decision journal
+records and risk-decision or risk-veto packets. Freeze, kill-switch, flatten,
+and reconciliation mismatch helpers produce matching local audit artifacts.
+The Freqtrade adapter annotates its latest candle with decision records,
+journal records, and event packets while keeping entries disabled by default.
+
+This is still local artifact generation only. It does not call exchanges,
+models, webhooks, wallets, or live Freqtrade execution; it does not persist
+anything unless the local journal writer is explicitly used by a caller. Replay
+utilities and paper-mode runtime composition remain later tasks.
+
+```bash
+python -m pytest tests/unit/test_audit_wiring.py tests/integration/test_freqtrade_adapter.py
+```
+
+## Replay Utility
+
+Task 35 adds `scripts/replay_event_packets.py` for local reconstruction of
+decision and incident timelines from append-only journal JSONL files and event
+packet JSONL files. The utility reads files only, filters by run ID or
+millisecond timestamp range, and emits deterministic JSON for operator review,
+tests, retrieval, and later promotion evidence.
+
+```bash
+python scripts/replay_event_packets.py \
+  --journal-path data/journals/paper-run.jsonl \
+  --packet-path data/event_packets/paper-run.jsonl \
+  --run-id paper-run-001 \
+  --pretty
+```
+
+Replay tests are fully local and require no credentials, webhooks, exchange
+access, model calls, wallet access, or live execution:
+
+```bash
+python -m pytest tests/unit/test_replay_event_packets.py
+```

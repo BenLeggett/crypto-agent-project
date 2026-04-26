@@ -53,6 +53,9 @@ def test_adapter_indicator_output_matches_direct_shared_decision_path() -> None:
     assert latest["ca_decision_record"] == direct.to_record()
     assert latest["ca_decision_kind"] == "proposal"
     assert latest["ca_requires_supervisor_review"] is True
+    assert latest["ca_journal_records"][0]["record_type"] == "proposal_input"
+    assert latest["ca_journal_records"][1]["record_type"] == "proposal_output"
+    assert latest["ca_event_packets"][0]["event_type"] == "proposal_generated"
     assert latest["ca_decision_record"]["decision_input"]["strategy_snapshot"]["schema_version"] == "strategy_snapshot.v1"
     assert latest["ca_decision_record"]["output"]["schema_version"] == "trade_proposal.v1"
 

@@ -14,18 +14,33 @@ from apps.supervisor.alerts import (
     deliver_supervisor_alerts,
 )
 from apps.supervisor.health import HealthCheck, HealthStatus, SupervisorHealth, build_supervisor_health
-from apps.supervisor.kill_switch import FlattenWorkflowRequest, activate_kill_switch, build_flatten_workflow_request
+from apps.supervisor.kill_switch import (
+    FlattenWorkflowRequest,
+    SupervisorControlAuditArtifacts,
+    activate_kill_switch,
+    build_flatten_workflow_request,
+    control_command_audit_artifacts,
+    flatten_workflow_audit_artifacts,
+)
 from apps.supervisor.reconciliation import (
     AccountSnapshot,
     BalanceSnapshot,
     PositionSnapshot,
+    ReconciliationAuditArtifacts,
     ReconciliationMismatch,
     ReconciliationReport,
     ReconciliationSeverity,
     ReconciliationStatus,
+    reconciliation_audit_artifacts,
     reconcile_account_snapshots,
 )
-from apps.supervisor.service import SupervisorConfig, SupervisorEvaluation, SupervisorService, account_state_with_controls
+from apps.supervisor.service import (
+    SupervisorAuditArtifacts,
+    SupervisorConfig,
+    SupervisorEvaluation,
+    SupervisorService,
+    account_state_with_controls,
+)
 
 __all__ = [
     "AccountSnapshot",
@@ -35,6 +50,7 @@ __all__ = [
     "HealthStatus",
     "MockSupervisorAlertSink",
     "PositionSnapshot",
+    "ReconciliationAuditArtifacts",
     "ReconciliationMismatch",
     "ReconciliationReport",
     "ReconciliationSeverity",
@@ -43,7 +59,9 @@ __all__ = [
     "SupervisorAlertDelivery",
     "SupervisorAlertSeverity",
     "SupervisorAlertType",
+    "SupervisorAuditArtifacts",
     "SupervisorConfig",
+    "SupervisorControlAuditArtifacts",
     "SupervisorEvaluation",
     "SupervisorHealth",
     "SupervisorService",
@@ -55,7 +73,10 @@ __all__ = [
     "account_state_with_controls",
     "build_supervisor_health",
     "build_flatten_workflow_request",
+    "control_command_audit_artifacts",
     "deliver_supervisor_alert",
     "deliver_supervisor_alerts",
+    "flatten_workflow_audit_artifacts",
+    "reconciliation_audit_artifacts",
     "reconcile_account_snapshots",
 ]

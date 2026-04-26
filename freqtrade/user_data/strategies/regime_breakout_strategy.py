@@ -22,6 +22,7 @@ except Exception:  # pragma: no cover - local tests run without Freqtrade.
 
 from libs.decisioning.deterministic_rules import DeterministicDecisionResult, DeterministicProposalConfig
 from libs.decisioning.schemas import DecisionMode, TradeProposal
+from apps.decision_engine.service import build_decision_audit_artifacts
 from libs.strategy.interfaces import Candle, MarketSeries, StrategyContext, TradeSide
 from libs.strategy.signal_snapshot import SignalSnapshotSizingConfig, build_signal_snapshot
 
@@ -112,7 +113,10 @@ class RegimeBreakoutStrategy(IStrategy):
 
         output = result.output
         output_record = output.to_record()
+        audit = build_decision_audit_artifacts(result, source="freqtrade_adapter")
         _set_cell(dataframe, last_index, "ca_decision_record", result.to_record())
+        _set_cell(dataframe, last_index, "ca_journal_records", [record.to_record() for record in audit.journal_records])
+        _set_cell(dataframe, last_index, "ca_event_packets", [packet.to_record() for packet in audit.event_packets])
         _set_cell(dataframe, last_index, "ca_decision_kind", "proposal" if isinstance(output, TradeProposal) else "no_trade")
         _set_cell(dataframe, last_index, "ca_symbol", result.decision_input.market.symbol)
         _set_cell(dataframe, last_index, "ca_requires_supervisor_review", isinstance(output, TradeProposal))

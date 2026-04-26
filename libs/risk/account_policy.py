@@ -121,6 +121,7 @@ class AccountRiskPolicy:
             "proposal_symbol": proposal.symbol,
             "proposal_action": proposal.action.value,
             "proposal_mode": proposal.mode.value,
+            "created_at_ms": str(proposal.created_at_ms),
         }
         return RiskPolicyDecision(
             schema_version=RISK_POLICY_SCHEMA_VERSION,

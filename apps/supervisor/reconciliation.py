@@ -13,6 +13,8 @@ from enum import Enum
 from types import MappingProxyType
 from typing import Any, Mapping, Optional, Sequence
 
+from libs.event_packets import EventPacket, build_reconciliation_mismatch_packet
+from libs.journal import JournalRecord, JournalRecordType
 from libs.strategy.interfaces import TradeSide
 
 ACCOUNT_SNAPSHOT_SCHEMA_VERSION = "account_snapshot.v1"
@@ -199,6 +201,20 @@ class ReconciliationReport:
         }
 
 
+@dataclass(frozen=True)
+class ReconciliationAuditArtifacts:
+    """Local audit artifacts for reconciliation reports."""
+
+    journal_records: tuple[JournalRecord, ...]
+    event_packets: tuple[EventPacket, ...]
+
+    def to_record(self) -> dict[str, Any]:
+        return {
+            "journal_records": [record.to_record() for record in self.journal_records],
+            "event_packets": [packet.to_record() for packet in self.event_packets],
+        }
+
+
 def reconcile_account_snapshots(
     *,
     report_id: str,
@@ -236,6 +252,46 @@ def reconcile_account_snapshots(
             "position_notional_tolerance": _decimal_text(position_notional_tolerance),
         },
     )
+
+
+def reconciliation_audit_artifacts(
+    *,
+    report: ReconciliationReport,
+    config_hash: str,
+    source: str = "supervisor",
+) -> ReconciliationAuditArtifacts:
+    """Build journal and packet artifacts for reconciliation mismatches."""
+
+    if not isinstance(report, ReconciliationReport):
+        raise TypeError("report must be a ReconciliationReport")
+    _require_text(config_hash, "config_hash")
+    if report.status is ReconciliationStatus.MATCHED:
+        return ReconciliationAuditArtifacts(journal_records=(), event_packets=())
+
+    payload = report.to_record()
+    critical = any(mismatch.severity is ReconciliationSeverity.CRITICAL for mismatch in report.mismatches)
+    journal = JournalRecord(
+        record_id=f"reconciliation-mismatch-{report.run_id}-{report.report_id}",
+        run_id=report.run_id,
+        created_at_ms=report.created_at_ms,
+        record_type=JournalRecordType.MISMATCH,
+        source=source,
+        config_hash=config_hash,
+        payload=payload,
+        metadata={
+            "status": report.status.value,
+            "critical": str(critical).lower(),
+        },
+    )
+    packet = build_reconciliation_mismatch_packet(
+        run_id=report.run_id,
+        report_id=report.report_id,
+        occurred_at_ms=report.created_at_ms,
+        report=payload,
+        critical=critical,
+        source=source,
+    )
+    return ReconciliationAuditArtifacts(journal_records=(journal,), event_packets=(packet,))
 
 
 def account_snapshot_from_record(record: Mapping[str, Any]) -> AccountSnapshot:
@@ -477,11 +533,13 @@ __all__ = [
     "AccountSnapshot",
     "BalanceSnapshot",
     "PositionSnapshot",
+    "ReconciliationAuditArtifacts",
     "ReconciliationMismatch",
     "ReconciliationReport",
     "ReconciliationSeverity",
     "ReconciliationStatus",
     "account_snapshot_from_record",
     "empty_account_snapshot",
+    "reconciliation_audit_artifacts",
     "reconcile_account_snapshots",
 ]
