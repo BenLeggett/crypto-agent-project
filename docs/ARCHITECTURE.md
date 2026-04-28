@@ -221,6 +221,7 @@ repo/
 │     ├─ config.live.json
 │     └─ logs/
 ├─ scripts/
+│  ├─ bootstrap_paper_runtime.py
 │  ├─ bootstrap_data.py
 │  ├─ update_market_data.py
 │  ├─ validate_data.py

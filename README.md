@@ -428,3 +428,66 @@ access, model calls, wallet access, or live execution:
 ```bash
 python -m pytest tests/unit/test_replay_event_packets.py
 ```
+
+## Paper Compose Stack
+
+Task 36 adds the first paper-mode compose setup. `docker-compose.yml` starts a
+local audit bootstrap, the decision-engine boundary, the deterministic
+supervisor, and Freqtrade dry-run with the checked-in dry-run config. The audit
+bootstrap writes local restart records to `data/journals/paper-runtime.jsonl`
+and `data/event_packets/paper-runtime.jsonl` before the long-running services
+start.
+
+```bash
+make paper-up
+```
+
+Useful local follow-ups:
+
+```bash
+make paper-logs
+make paper-replay
+make paper-down
+```
+
+This stack is paper/dry-run only. It uses `freqtrade/user_data/config.dryrun.json`,
+keeps live execution flags false, keeps AI provider mode mocked, and does not
+require exchange keys, wallet credentials, bot tokens, or webhook URLs. Docker
+must be able to pull the configured Python and Freqtrade images, and Freqtrade
+dry-run may need public exchange connectivity for market data, but those are not
+secret-backed live wiring steps.
+
+Task 37 is still responsible for end-to-end paper tests covering restart
+recovery, data gaps, risk vetoes, and steady-state operation.
+
+```bash
+python -m pytest tests/unit/test_paper_runtime_bootstrap.py tests/unit/test_paper_compose_config.py
+```
+
+## Paper End-To-End Tests
+
+Task 37 adds CI-friendly paper-mode integration tests that exercise the local
+paper stack boundaries without Docker, exchange credentials, wallet access, AI
+provider keys, bot tokens, or webhook URLs. The tests cover restart recovery,
+data-gap blocking, deterministic supervisor risk vetoes, and steady-state
+dry-run guardrails using journal records, event packets, and replay output.
+
+```bash
+python -m pytest tests/integration/test_paper_mode_e2e.py
+```
+
+## Paper Daily Report
+
+Phase 9 includes a mock/local daily report artifact built from existing journal
+and event packet streams through the replay utility. The report is JSON, writes
+to `data/summaries/daily_report.json` by default, and is evidence for paper-mode
+review only. It is not live trading approval.
+
+```bash
+python scripts/emit_daily_report.py --run-id paper-local --pretty
+```
+
+The draft promotion evidence checklist lives at
+`docs/PROMOTION_CHECKLIST.md`. It focuses on paper-mode evidence, risk vetoes,
+replayability, drawdown review, operator updates, and explicit future human
+approval before any live wiring.

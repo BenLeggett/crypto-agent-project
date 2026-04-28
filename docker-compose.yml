@@ -1,3 +1,108 @@
 name: crypto-agent-project
 
-services: {}
+x-paper-environment: &paper-environment
+  CONFIG_ENV: dry_run
+  APP_MODE: paper
+  APP_EXECUTION: dry_run
+  TRADING_FOUNDATION: freqtrade
+  LIVE_EXECUTION_ENABLED: "false"
+  RISK_ENABLED: "true"
+  RISK_LIVE_EXECUTION_ENABLED: "false"
+  AI_PROVIDER: mock
+  AI_PREMIUM_ENABLED: "false"
+  LOG_FORMAT: structured
+  PYTHONUNBUFFERED: "1"
+  PYTHONPATH: /workspace
+  PAPER_RUN_ID: ${PAPER_RUN_ID:-paper-local}
+  PAPER_CONFIG_HASH: ${PAPER_CONFIG_HASH:-paper-local-config}
+  PAPER_JOURNAL_PATH: ${PAPER_JOURNAL_PATH:-data/journals/paper-runtime.jsonl}
+  PAPER_EVENT_PACKET_PATH: ${PAPER_EVENT_PACKET_PATH:-data/event_packets/paper-runtime.jsonl}
+
+x-python-service: &python-service
+  image: ${PAPER_PYTHON_IMAGE:-python:3.11-slim}
+  working_dir: /workspace
+  volumes:
+    - ./:/workspace
+  environment:
+    <<: *paper-environment
+
+services:
+  paper-audit-bootstrap:
+    <<: *python-service
+    command:
+      - python
+      - scripts/bootstrap_paper_runtime.py
+      - --run-id
+      - ${PAPER_RUN_ID:-paper-local}
+      - --journal-path
+      - ${PAPER_JOURNAL_PATH:-data/journals/paper-runtime.jsonl}
+      - --packet-path
+      - ${PAPER_EVENT_PACKET_PATH:-data/event_packets/paper-runtime.jsonl}
+      - --config-hash
+      - ${PAPER_CONFIG_HASH:-paper-local-config}
+
+  decision-engine:
+    <<: *python-service
+    restart: unless-stopped
+    depends_on:
+      paper-audit-bootstrap:
+        condition: service_completed_successfully
+    command:
+      - python
+      - -m
+      - apps.decision_engine.main
+      - --watch
+      - --heartbeat-interval-seconds
+      - ${PAPER_HEARTBEAT_INTERVAL_SECONDS:-60}
+
+  supervisor:
+    <<: *python-service
+    restart: unless-stopped
+    depends_on:
+      paper-audit-bootstrap:
+        condition: service_completed_successfully
+    command:
+      - python
+      - -m
+      - apps.supervisor.main
+      - --watch
+      - --heartbeat-interval-seconds
+      - ${PAPER_HEARTBEAT_INTERVAL_SECONDS:-60}
+
+  freqtrade-dryrun:
+    image: ${PAPER_FREQTRADE_IMAGE:-freqtradeorg/freqtrade:stable}
+    working_dir: /workspace
+    restart: unless-stopped
+    depends_on:
+      paper-audit-bootstrap:
+        condition: service_completed_successfully
+    volumes:
+      - ./:/workspace
+    environment:
+      <<: *paper-environment
+    command:
+      - trade
+      - --config
+      - /workspace/freqtrade/user_data/config.dryrun.json
+      - --userdir
+      - /workspace/freqtrade/user_data
+      - --strategy
+      - RegimeBreakoutStrategy
+
+  paper-replay:
+    <<: *python-service
+    profiles:
+      - tools
+    depends_on:
+      paper-audit-bootstrap:
+        condition: service_completed_successfully
+    command:
+      - python
+      - scripts/replay_event_packets.py
+      - --journal-path
+      - ${PAPER_JOURNAL_PATH:-data/journals/paper-runtime.jsonl}
+      - --packet-path
+      - ${PAPER_EVENT_PACKET_PATH:-data/event_packets/paper-runtime.jsonl}
+      - --run-id
+      - ${PAPER_RUN_ID:-paper-local}
+      - --pretty

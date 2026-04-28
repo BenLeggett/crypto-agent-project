@@ -153,3 +153,20 @@
 - Confirmed `docs/PHASE_TASK_MAP.md` is authoritative for phase/task progress tracking and identified the activity log omission after Phase 4.
 - Noted the hole in `ACTIVITY.MD`: subsequent project progress through Phases 5-8 was tracked in canonical docs and implementation artifacts, but the activity log itself was not appended until now.
 - Added a corrective activity entry so the project log now reflects the current milestone and documents the oversight for future tracking discipline.
+
+## 2026-04-26
+- Implemented Task 36: paper-mode end-to-end compose setup.
+- Added a mock-safe compose stack that starts paper audit bootstrap, decision-engine, supervisor, and Freqtrade dry-run services with live execution disabled.
+- Added local paper runtime bootstrap artifacts for restart journaling and event packets under the configured `data/` paths.
+- Preserved manual wiring boundaries: no exchange keys, wallet credentials, model provider keys, bot tokens, webhook URLs, or live config wiring are required for this task.
+
+## 2026-04-26
+- Implemented Task 37: end-to-end paper-mode integration tests.
+- Added local CI-friendly coverage for restart recovery, data-gap blocking, deterministic risk veto replay, and steady-state dry-run guardrails.
+- Kept validation mock/local only: no Docker runtime, exchange credentials, wallet credentials, AI provider keys, notifier secrets, or live execution are required.
+
+## 2026-04-26
+- Closed the remaining Phase 9 reporting and promotion-evidence gaps.
+- Replaced the daily report placeholder with a local paper-mode JSON report over existing journal, event packet, and replay artifacts.
+- Added a draft promotion checklist that records paper evidence requirements while explicitly stating it is not live approval.
+- Added daily report tests and README usage notes while keeping all validation mock/local with no secrets or live wallet execution.

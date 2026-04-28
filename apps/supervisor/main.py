@@ -2,7 +2,11 @@
 
 from __future__ import annotations
 
+import argparse
+import sys
+import time
 from decimal import Decimal
+from typing import Optional, Sequence
 
 from apps.supervisor.service import SupervisorConfig, SupervisorService
 from libs.common.logging import configure_logging, get_logger
@@ -13,13 +17,15 @@ from libs.risk import AccountRiskLimits, AccountRiskState, DrawdownLimits, Drawd
 SERVICE_NAME = "supervisor"
 
 
-def main() -> int:
+def main(argv: Optional[Sequence[str]] = None) -> int:
     """Boot the supervisor without exchange, model, notifier, or wallet access."""
+    args = _parse_args([] if argv is None else argv)
     config = load_config()
     configure_logging(config, service_name=SERVICE_NAME)
     service = _build_bootstrap_service(config)
     health = service.health(_bootstrap_state())
-    get_logger(__name__).info(
+    logger = get_logger(__name__)
+    logger.info(
         "supervisor booted with deterministic risk policy.",
         extra={
             "event": "supervisor_started",
@@ -27,7 +33,28 @@ def main() -> int:
             "health": health.to_record(),
         },
     )
+    if args.watch:
+        _watch(logger, service=service, heartbeat_interval_seconds=args.heartbeat_interval_seconds)
     return 0
+
+
+def _parse_args(argv: Sequence[str]) -> argparse.Namespace:
+    parser = argparse.ArgumentParser(description="Boot the deterministic supervisor boundary.")
+    parser.add_argument("--watch", action="store_true", help="Keep the service alive for compose supervision.")
+    parser.add_argument("--heartbeat-interval-seconds", type=float, default=60.0)
+    return parser.parse_args(list(argv))
+
+
+def _watch(logger, *, service: SupervisorService, heartbeat_interval_seconds: float) -> None:
+    if heartbeat_interval_seconds <= 0:
+        raise ValueError("heartbeat interval must be positive")
+    while True:
+        health = service.health(_bootstrap_state())
+        logger.info(
+            "supervisor heartbeat: deterministic risk policy loaded.",
+            extra={"event": "supervisor_heartbeat", "health": health.to_record()},
+        )
+        time.sleep(heartbeat_interval_seconds)
 
 
 def _build_bootstrap_service(config: ProjectConfig) -> SupervisorService:
@@ -69,4 +96,4 @@ def _bootstrap_state() -> AccountRiskState:
 
 
 if __name__ == "__main__":
-    raise SystemExit(main())
+    raise SystemExit(main(sys.argv[1:]))
