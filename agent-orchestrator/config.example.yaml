@@ -1,0 +1,32 @@
+# Example configuration for the agent orchestrator.
+
+# Base URL for the LM Studio OpenAI-compatible local server.
+local_llm_base_url: "http://localhost:1234/v1"
+# Placeholder API key for local OpenAI-compatible clients.
+local_llm_api_key: "lm-studio"
+# Local model name used for low-cost status and parsing tasks.
+local_llm_low_model: "mistral-7b-instruct"
+# Local model name used for slightly more capable local tasks.
+local_llm_medium_model: "llama-3.1-8b-instruct"
+
+# OpenAI API key for cloud fallback tasks.
+openai_api_key: "set-in-env-or-config"
+# Anthropic API key for optional cloud fallback tasks.
+anthropic_api_key: "set-in-env-or-config"
+# Default cloud model for higher-signal reviews and diagnosis.
+cloud_high_model: "gpt-4o-mini"
+# Default cloud model for the most expensive review tier.
+cloud_extra_high_model: "gpt-4o"
+
+# Discord webhook URL for orchestrator status and approval messages.
+discord_webhook_url: "https://discord.com/api/webhooks/replace-me"
+
+# Time to wait for an approval before timing out.
+orchestrator_approval_timeout_seconds: 3600
+# Maximum context budget the orchestrator should target.
+orchestrator_max_context_tokens: 4096
+# Relative path from agent-orchestrator/ to the repo root.
+project_root: ".."
+
+# Future Codex invocation mode; keep manual by default.
+codex_mode: "manual"

@@ -63,3 +63,7 @@ dist/
 .DS_Store
 Thumbs.db
 Desktop.ini
+
+# Local secrets and machine-specific config
+.env
+agent-orchestrator/.env

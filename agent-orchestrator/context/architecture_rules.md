@@ -1,0 +1,26 @@
+- The orchestrator is a development lifecycle tool only; it is not a trading agent.
+- The orchestrator must stay isolated inside `agent-orchestrator/` with its own config, state, and runtime.
+- The orchestrator must not import from or become a dependency of the trading runtime.
+- The orchestrator may read project docs, task queues, phase maps, git status, git diff summaries, validation output, and recent activity logs.
+- The orchestrator must not read, write, or modify exchange credentials, wallet configs, live Freqtrade configs, or anything under `configs/live/`.
+- The orchestrator must not trigger deployments, start Docker services, execute trades, or control live/paper trading behavior.
+- The deterministic trading and risk-governor logic remains authoritative over trading constraints.
+- Paper-trading-first rollout must be preserved.
+- Live execution must not be assumed or enabled without explicit future promotion and manual wiring.
+- `docs/IMPLEMENTATION_PLAN.md`, `docs/TASK_QUEUE.md`, and `docs/PHASE_TASK_MAP.md` are human-owned sources of truth and should not be modified automatically.
+- Routine summaries and status updates should prefer local LLM tiers when available.
+- Cloud models should be reserved for judgment-heavy work such as failed task diagnosis, phase reviews, architecture reviews, and risk reviews.
+- Codex prompt assembly should remain scoped and deterministic where possible; routine task prompts should be rendered from templates rather than invented from scratch.
+- Human approval is required before phase transitions, risky file changes, architecture changes, retrying after repeated validation failure, cloud-extra-high model use, committing changes, or any future automated Codex run.
+- Default mode is manual Codex handoff, not autonomous code execution.
+- Discord webhook posting is allowed for one-way updates; two-way bot command handling is optional and should be added later.
+- `ACTIVITY.md` is append-only and should record orchestrator actions, model tier, outcome, validation status, and next recommended action.
+- `state.sqlite` may track runs, tasks, and approvals, but it must not store secrets.
+- The orchestrator must not load the repo-root `.env` if that file may contain trading or exchange secrets.
+- Forbidden paths include:
+  - `configs/live/`
+  - `freqtrade/user_data/config.live.json`
+  - `.env`
+- Any diff touching forbidden paths, trading execution paths, risk-sensitive modules, deployment files, or CI workflow files must trigger a warning or approval gate.
+- Validation should prefer safe checks: `git status`, `git diff --stat`, tests, lint/typecheck when available, forbidden-path checks, and basic secret-pattern scanning.
+- The system should remain modular so the same orchestrator pattern can later be reused for other software projects or a future controlled operations-monitoring workflow.
