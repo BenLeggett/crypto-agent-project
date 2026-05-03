@@ -13,6 +13,7 @@ import context_builder
 import decision_gate
 import discord_notifier
 import prompt_runner
+import validator
 from validator import FORBIDDEN_PATHS
 from model_router import ModelTier
 from task_queue_reader import read_task
@@ -448,6 +449,53 @@ def phase_review(orchestrator_root: Path) -> int:
     return 1
 
 
+def _print_validation_section(title: str, items: list[str]) -> None:
+    print(f"{title}:")
+    if not items:
+        print("None")
+        return
+    for item in items:
+        print(item)
+
+
+def run_validate() -> int:
+    """Run validator checks, print the result, and log to ACTIVITY.MD."""
+    project_root = str(Path(__file__).parent.parent.resolve())
+    result = validator.validate(project_root)
+    passed = bool(result["passed"])
+    diff_summary = str(result.get("diff_summary") or "No uncommitted changes")
+    errors = [str(item) for item in result.get("errors", [])]
+    warnings = [str(item) for item in result.get("warnings", [])]
+
+    print("=== VALIDATION RESULT ===")
+    print(f"Passed: {passed}")
+    print()
+    print("Diff summary:")
+    print(diff_summary)
+    print()
+    _print_validation_section("Errors", errors)
+    print()
+    _print_validation_section("Warnings", warnings)
+
+    activity_logger.log_activity(
+        {
+            "run_id": int(datetime.now().strftime("%H%M%S")),
+            "timestamp": datetime.now().isoformat(timespec="seconds"),
+            "phase": "Orchestrator validation",
+            "task_id": "all",
+            "action": "Validation run",
+            "model_tier": "none",
+            "model_name": "",
+            "outcome": f"Passed: {passed}",
+            "validation": "Passed" if passed else "Failed",
+            "notes": f"errors={len(errors)}; warnings={len(warnings)}",
+        },
+        str(Path(project_root) / "ACTIVITY.MD"),
+    )
+
+    return 0 if passed else 1
+
+
 def main() -> int:
     """Load environment variables, parse CLI flags, and exit cleanly."""
     orchestrator_root = Path(__file__).resolve().parent
@@ -462,6 +510,8 @@ def main() -> int:
         return run_next(orchestrator_root)
     if args.phase_review:
         return phase_review(orchestrator_root)
+    if args.validate:
+        return run_validate()
     print("Orchestrator ready")
     return 0
 

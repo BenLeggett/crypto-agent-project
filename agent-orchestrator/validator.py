@@ -35,7 +35,11 @@ def _combined_output(result: subprocess.CompletedProcess[str]) -> str:
 
 
 def _make_check(target: str, project_root: Path, errors: list[str], warnings: list[str]) -> None:
-    result = _run(["make", target], project_root)
+    try:
+        result = _run(["make", target], project_root)
+    except FileNotFoundError:
+        warnings.append(f"Skipped make {target}: make executable not found.")
+        return
     output = _combined_output(result)
     if result.returncode == 0:
         return
