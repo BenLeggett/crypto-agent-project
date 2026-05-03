@@ -1,6 +1,9 @@
 Read AGENTS.md and the relevant docs first.
 
-{task_context}
+Task 38: Implement AI router core
+Goal: Centralize all model invocation behind one policy-enforcing service.
+Files likely affected: apps/ai_router/router.py, apps/ai_router/main.py, apps/ai_router/providers.py, apps/ai_router/schemas.py
+Done criteria: router supports approved providers, structured outputs, and fail-closed policy checks.
 
 Implement the next dependency-ordered task only.
 
