@@ -133,6 +133,47 @@ def find_phase_for_task(phases: list[dict[str, object]], task_id: int) -> str:
     return "Unknown phase"
 
 
+def seed_tasks(
+    phases: list[dict[str, object]],
+    queue_path: Path,
+    db_path: Path,
+) -> None:
+    """Ensure every mapped task exists in SQLite with at least a pending status."""
+    connection = sqlite3.connect(db_path)
+    try:
+        connection.execute("PRAGMA journal_mode=WAL")
+        for phase in phases:
+            task_ids = phase.get("tasks", [])
+            if not isinstance(task_ids, list):
+                continue
+            for task_id in task_ids:
+                task = read_task(str(task_id), str(queue_path))
+                connection.execute(
+                    """
+                    INSERT INTO tasks (
+                        task_id,
+                        phase,
+                        title,
+                        status,
+                        attempts,
+                        last_run_id,
+                        notes
+                    ) VALUES (?, ?, ?, 'pending', 0, NULL, 'Seeded by bootstrap_state.py')
+                    ON CONFLICT(task_id) DO UPDATE SET
+                        phase = excluded.phase,
+                        title = excluded.title
+                    """,
+                    (
+                        task_id,
+                        find_phase_for_task(phases, task_id),
+                        task["title"],
+                    ),
+                )
+        connection.commit()
+    finally:
+        connection.close()
+
+
 def mark_done(task_ids: list[int], phases: list[dict[str, object]], queue_path: Path, db_path: Path) -> None:
     connection = sqlite3.connect(db_path)
     try:
@@ -183,6 +224,7 @@ def main() -> int:
 
     init_tasks_table(db_path)
     phases = parse_phase_task_map(phase_map_path)
+    seed_tasks(phases, queue_path, db_path)
 
     if args.mark_done:
         mark_done(parse_task_ids(args.mark_done), phases, queue_path, db_path)

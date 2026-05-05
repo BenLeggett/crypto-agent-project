@@ -5,6 +5,8 @@ import inspect
 import os
 import re
 import sqlite3
+import subprocess
+import time
 from datetime import datetime
 from pathlib import Path
 
@@ -35,6 +37,7 @@ def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(description="Agent orchestrator scaffold.")
     parser.add_argument("--status", action="store_true", help="Show orchestrator status.")
     parser.add_argument("--run-next", action="store_true", help="Run the next task.")
+    parser.add_argument("--run-loop", action="store_true", help="Run the autonomous task loop.")
     parser.add_argument("--phase-review", action="store_true", help="Review the current phase.")
     parser.add_argument("--validate", action="store_true", help="Run validation checks.")
     return parser
@@ -85,6 +88,14 @@ def init_state_db(db_path: Path) -> None:
                 decided_at TEXT,
                 decision TEXT,
                 notes TEXT
+            )
+            """
+        )
+        connection.execute(
+            """
+            CREATE TABLE IF NOT EXISTS settings (
+                key TEXT PRIMARY KEY,
+                value TEXT
             )
             """
         )
@@ -153,7 +164,9 @@ def find_current_phase(phases: list[dict[str, object]], status_map: dict[int, st
 
     for phase in phases:
         task_ids = phase.get("tasks", [])
-        if isinstance(task_ids, list) and any(status_map.get(task_id) != "done" for task_id in task_ids):
+        if isinstance(task_ids, list) and any(
+            status_map.get(task_id) not in {"done", "skipped"} for task_id in task_ids
+        ):
             return phase
     return phases[-1]
 
@@ -164,7 +177,7 @@ def find_active_task(phase: dict[str, object], status_map: dict[int, str], queue
     if not isinstance(task_ids, list):
         return None
     for task_id in task_ids:
-        if status_map.get(task_id) != "done":
+        if status_map.get(task_id) not in {"done", "skipped"}:
             return read_task(str(task_id), str(queue_path))
     return None
 
@@ -308,6 +321,466 @@ def _log_run_next_activity(
         },
         str(project_root / "ACTIVITY.MD"),
     )
+
+
+def _phase_display_name(phase: dict[str, object]) -> str:
+    """Format one phase label consistently for logs and Discord."""
+    return f"Phase {phase['number']} - {phase['name']}"
+
+
+def _connect_db(db_path: Path) -> sqlite3.Connection:
+    """Open the orchestrator database with the expected journaling mode."""
+    connection = sqlite3.connect(db_path)
+    connection.execute("PRAGMA journal_mode=WAL")
+    return connection
+
+
+def _get_setting(db_path: Path, key: str, default: str = "") -> str:
+    """Read a value from the settings table, falling back to the provided default."""
+    connection = _connect_db(db_path)
+    try:
+        row = connection.execute(
+            "SELECT value FROM settings WHERE key = ?",
+            (key,),
+        ).fetchone()
+    finally:
+        connection.close()
+    if row is None or row[0] is None:
+        return default
+    return str(row[0])
+
+
+def _set_setting(db_path: Path, key: str, value: str) -> None:
+    """Persist one settings value in sqlite."""
+    connection = _connect_db(db_path)
+    try:
+        connection.execute(
+            """
+            INSERT OR REPLACE INTO settings (key, value)
+            VALUES (?, ?)
+            """,
+            (key, value),
+        )
+        connection.commit()
+    finally:
+        connection.close()
+
+
+def _set_paused(db_path: Path, paused: bool) -> None:
+    """Persist the loop pause flag."""
+    _set_setting(db_path, "paused", "1" if paused else "0")
+
+
+def _is_paused(db_path: Path) -> bool:
+    """Return True when the loop should wait for a resume command."""
+    return _get_setting(db_path, "paused", "0") == "1"
+
+
+def _mark_task_status(db_path: Path, task_id: int, status: str, notes: str = "") -> None:
+    """Update the persisted task status for loop control."""
+    connection = _connect_db(db_path)
+    try:
+        connection.execute(
+            """
+            UPDATE tasks
+            SET status = ?, notes = ?
+            WHERE task_id = ?
+            """,
+            (status, notes, task_id),
+        )
+        connection.commit()
+    finally:
+        connection.close()
+
+
+def _create_pending_approval(db_path: Path, gate_type: str, ref: str, notes: str = "") -> None:
+    """Insert a pending approval row so the listener and audit trail share one ref."""
+    connection = _connect_db(db_path)
+    requested_at = datetime.now().isoformat(timespec="seconds")
+    try:
+        connection.execute(
+            """
+            INSERT INTO approvals (
+                run_id,
+                gate_type,
+                ref,
+                requested_at,
+                decided_at,
+                decision,
+                notes
+            ) VALUES (?, ?, ?, ?, ?, ?, ?)
+            """,
+            (None, gate_type, ref, requested_at, None, None, notes),
+        )
+        connection.commit()
+    finally:
+        connection.close()
+
+
+def _log_loop_activity(
+    project_root: Path,
+    phase: str,
+    task_id: str | int,
+    action: str,
+    outcome: str,
+    notes: str,
+    model_tier: str = "none",
+    model_name: str = "",
+    validation: str = "Not provided",
+) -> None:
+    """Append one loop event to ACTIVITY.MD."""
+    activity_logger.log_activity(
+        {
+            "run_id": int(datetime.now().strftime("%H%M%S")),
+            "timestamp": datetime.now().isoformat(timespec="seconds"),
+            "phase": phase,
+            "task_id": task_id,
+            "action": action,
+            "model_tier": model_tier,
+            "model_name": model_name,
+            "outcome": outcome,
+            "validation": validation,
+            "notes": notes,
+        },
+        str(project_root / "ACTIVITY.MD"),
+    )
+
+
+def _truncate_for_discord(message: str, limit: int = 1800) -> str:
+    """Trim long payloads to stay under Discord's message ceiling."""
+    text = message.strip()
+    if len(text) <= limit:
+        return text
+    return f"{text[: limit - 15].rstrip()} ...[truncated]"
+
+
+def _loop_interval_seconds() -> int:
+    """Read the configured run-loop sleep interval."""
+    return max(1, int(os.getenv("LOOP_INTERVAL_SECONDS", "30")))
+
+
+def _approval_timeout_seconds() -> int:
+    """Read the human gate timeout."""
+    return max(1, int(os.getenv("ORCHESTRATOR_APPROVAL_TIMEOUT_SECONDS", "3600")))
+
+
+def _approval_timeout_minutes() -> int:
+    """Convert the approval timeout to minutes for Discord messages."""
+    timeout_seconds = _approval_timeout_seconds()
+    return max(1, timeout_seconds // 60)
+
+
+def _next_phase(phases: list[dict[str, object]], current_phase: dict[str, object]) -> dict[str, object] | None:
+    """Return the next mapped phase after the provided one, if any."""
+    for index, phase in enumerate(phases):
+        if phase is current_phase:
+            if index + 1 < len(phases):
+                return phases[index + 1]
+            return None
+    return None
+
+
+def _phase_review_result(
+    orchestrator_root: Path,
+    project_root: Path,
+    current_phase: dict[str, object],
+) -> str:
+    """Run the model-backed review for the current phase."""
+    task_ids = current_phase.get("tasks", [])
+    if not isinstance(task_ids, list) or not task_ids:
+        return "No tasks are mapped to this phase. All tracked tasks may already be complete."
+
+    context_pack = context_builder.build_context(str(task_ids[-1]), str(project_root))
+    return prompt_runner.run_model_prompt(
+        str(orchestrator_root / "prompts" / "phase_review.md"),
+        context_pack,
+        ModelTier.CLOUD_HIGH,
+        _model_config_from_env(),
+    )
+
+
+def _codex_mode() -> str:
+    """Validate and normalize the requested Codex loop mode."""
+    mode = os.getenv("CODEX_MODE", "manual").strip().lower()
+    if mode not in {"manual", "auto"}:
+        raise ValueError(f"Unsupported CODEX_MODE: {mode}")
+    return mode
+
+
+def _manual_prompt_message(task: dict, prompt_path: Path) -> str:
+    """Render the Discord message for manual prompt application."""
+    prompt_text = prompt_path.read_text(encoding="utf-8")
+    prompt_excerpt = _truncate_for_discord(prompt_text, limit=1400)
+    return (
+        f"[ORCHESTRATOR] Task {task['id']} prompt ready: {task['title']}\n"
+        f"Prompt file: {prompt_path}\n"
+        f"Prompt excerpt:\n```text\n{prompt_excerpt}\n```"
+    )
+
+
+def _codex_auto_message(task: dict) -> str:
+    """Explain the Codex invocation for auto mode."""
+    return (
+        f"[ORCHESTRATOR] Running Codex on task {task['id']}: {task['title']}\n"
+        f"Implementing: {task['goal']}\n"
+        "Mode: auto via `codex run --prompt-file agent-orchestrator/last_prompt.md` "
+        "because CODEX_MODE=auto allows the loop to execute the prepared prompt directly."
+    )
+
+
+def _validation_failure_message(task: dict, errors: list[str]) -> str:
+    """Build the Discord notification for a failed validation pass."""
+    summary = "\n".join(f"- {error}" for error in errors) if errors else "- Unknown validation failure"
+    return (
+        f"[ORCHESTRATOR · FAILURE] Task {task['id']}: {task['title']}\n"
+        f"Validation failed:\n{_truncate_for_discord(summary, limit=1500)}"
+    )
+
+
+def run_loop(orchestrator_root: Path) -> int:
+    """Run the Stage 12b autonomous task loop."""
+    project_root = (orchestrator_root / os.getenv("PROJECT_ROOT", "..")).resolve()
+    phase_map_path = project_root / "docs" / "PHASE_TASK_MAP.md"
+    queue_path = project_root / "docs" / "TASK_QUEUE.md"
+    db_path = orchestrator_root / "state.sqlite"
+    prompt_template_path = orchestrator_root / "prompts" / "run_next_task.md"
+    prompt_output_path = orchestrator_root / "last_prompt.md"
+
+    _log_loop_activity(
+        project_root,
+        "Run loop",
+        "loop",
+        "Starting run loop",
+        "Loop startup complete.",
+        "Run loop initialized and awaiting work.",
+    )
+    discord_notifier.notify("[ORCHESTRATOR] Starting run loop")
+
+    while True:
+        if _is_paused(db_path):
+            time.sleep(_loop_interval_seconds())
+            continue
+
+        phases = parse_phase_task_map(phase_map_path)
+        status_map = get_task_status_map(db_path)
+        current_phase = find_current_phase(phases, status_map)
+        active_task = find_active_task(current_phase, status_map, queue_path)
+
+        if active_task is None:
+            task_ids = current_phase.get("tasks", [])
+            if not isinstance(task_ids, list) or not task_ids:
+                message = "[ORCHESTRATOR] No mapped tasks remain. Run loop stopping."
+                discord_notifier.notify(message)
+                _log_loop_activity(
+                    project_root,
+                    "Run loop",
+                    "loop",
+                    "Run loop complete",
+                    "No mapped tasks remain.",
+                    "All tracked phases appear complete.",
+                )
+                return 0
+
+            phase_review_result = _phase_review_result(orchestrator_root, project_root, current_phase)
+            phase_ref = f"phase-{current_phase['number']}-exit"
+            _create_pending_approval(
+                db_path,
+                "Phase transition",
+                phase_ref,
+                f"Awaiting human review for {_phase_display_name(current_phase)}.",
+            )
+            discord_notifier.notify(
+                discord_notifier.format_approval_request(
+                    "Phase transition",
+                    phase_ref,
+                    _truncate_for_discord(phase_review_result, limit=1200),
+                    timeout_minutes=_approval_timeout_minutes(),
+                )
+            )
+
+            approved = decision_gate.wait_for_approval(
+                phase_ref,
+                str(db_path),
+                _approval_timeout_seconds(),
+            )
+            decision_gate.record_decision(
+                phase_ref,
+                "Phase transition",
+                "approved" if approved else "rejected",
+                "Phase review approved." if approved else "Phase review rejected or timed out.",
+                str(db_path),
+            )
+
+            if approved:
+                next_phase = _next_phase(phases, current_phase)
+                _set_setting(
+                    db_path,
+                    "current_phase",
+                    _phase_display_name(next_phase) if next_phase is not None else "complete",
+                )
+                _log_loop_activity(
+                    project_root,
+                    _phase_display_name(current_phase),
+                    "phase-gate",
+                    "Phase review approved",
+                    "Phase gate passed.",
+                    f"Advanced past {phase_ref}.",
+                    model_tier=ModelTier.CLOUD_HIGH.value,
+                    model_name=os.getenv("CLOUD_HIGH_MODEL", ""),
+                )
+                continue
+
+            discord_notifier.notify(
+                f"[ORCHESTRATOR] Phase review for {_phase_display_name(current_phase)} was rejected or timed out. "
+                "Run loop paused."
+            )
+            _set_paused(db_path, True)
+            _log_loop_activity(
+                project_root,
+                _phase_display_name(current_phase),
+                "phase-gate",
+                "Phase review blocked",
+                "Phase gate rejected or timed out.",
+                f"Paused after {phase_ref}.",
+                model_tier=ModelTier.CLOUD_HIGH.value,
+                model_name=os.getenv("CLOUD_HIGH_MODEL", ""),
+            )
+            return 0
+
+        reasons = risky_reasons(active_task)
+        if reasons:
+            risk_ref = f"task-{active_task['id']}-risky"
+            verdict = "Human review required: " + "; ".join(reasons)
+            _create_pending_approval(db_path, "Risky task", risk_ref, verdict)
+            discord_notifier.notify(
+                discord_notifier.format_approval_request(
+                    "Risky task",
+                    risk_ref,
+                    verdict,
+                    timeout_minutes=_approval_timeout_minutes(),
+                )
+            )
+
+            approved = decision_gate.wait_for_approval(
+                risk_ref,
+                str(db_path),
+                _approval_timeout_seconds(),
+            )
+            decision_gate.record_decision(
+                risk_ref,
+                "Risky task",
+                "approved" if approved else "rejected",
+                verdict,
+                str(db_path),
+            )
+
+            if not approved:
+                _mark_task_status(
+                    db_path,
+                    int(active_task["id"]),
+                    "skipped",
+                    f"Skipped after risky gate rejection: {verdict}",
+                )
+                _log_loop_activity(
+                    project_root,
+                    _phase_display_name(current_phase),
+                    active_task["id"],
+                    "Risky task skipped",
+                    "Task skipped after risky gate rejection.",
+                    verdict,
+                )
+                continue
+
+        ensure_assemble_prompt()
+        task_context = format_task_context(active_task)
+        prompt_runner.assemble_prompt(
+            str(prompt_template_path),
+            task_context,
+            str(prompt_output_path),
+        )
+        _mark_task_status(
+            db_path,
+            int(active_task["id"]),
+            "in_progress",
+            "Prompt assembled for run-loop execution.",
+        )
+
+        codex_mode = _codex_mode()
+        codex_return_code = 0
+
+        if codex_mode == "manual":
+            discord_notifier.notify(_manual_prompt_message(active_task, prompt_output_path))
+            discord_notifier.notify(
+                "Manual mode: apply the prompt in last_prompt.md, then send !resume"
+            )
+            _set_paused(db_path, True)
+            _log_loop_activity(
+                project_root,
+                _phase_display_name(current_phase),
+                active_task["id"],
+                "Prompt assembled",
+                "Awaiting manual application.",
+                "Loop paused in manual mode after writing last_prompt.md.",
+                validation="Pending",
+            )
+            return 0
+
+        discord_notifier.notify(_codex_auto_message(active_task))
+        codex_result = subprocess.run(
+            ["codex", "run", "--prompt-file", "agent-orchestrator/last_prompt.md"],
+            cwd=project_root,
+            capture_output=True,
+            text=True,
+            check=False,
+        )
+        codex_return_code = codex_result.returncode
+
+        validation_result = validator.validate(str(project_root))
+        errors = [str(item) for item in validation_result.get("errors", [])]
+        warnings = [str(item) for item in validation_result.get("warnings", [])]
+        if codex_return_code != 0:
+            errors.append(f"codex run exited with return code {codex_return_code}.")
+            validation_result["passed"] = False
+            validation_result["errors"] = errors
+
+        if not bool(validation_result["passed"]):
+            failure_notes = "; ".join(errors + warnings)
+            _mark_task_status(
+                db_path,
+                int(active_task["id"]),
+                "failed",
+                failure_notes or "Validation failed.",
+            )
+            discord_notifier.notify(_validation_failure_message(active_task, errors))
+            _log_loop_activity(
+                project_root,
+                _phase_display_name(current_phase),
+                active_task["id"],
+                "Validation failed",
+                "failed",
+                failure_notes or "Validation failed with no error summary.",
+                validation="Failed",
+            )
+            _set_paused(db_path, True)
+            return 0
+
+        _mark_task_status(
+            db_path,
+            int(active_task["id"]),
+            "done",
+            f"Completed in run loop with CODEX_MODE={codex_mode}.",
+        )
+        _log_loop_activity(
+            project_root,
+            _phase_display_name(current_phase),
+            active_task["id"],
+            "Task completed",
+            "passed",
+            f"Validation passed after CODEX_MODE={codex_mode}; codex return code={codex_return_code}.",
+            validation="Passed",
+        )
+        discord_notifier.notify(f"Task {active_task['id']} complete \u2705")
+        time.sleep(_loop_interval_seconds())
 
 
 def run_next(orchestrator_root: Path) -> int:
@@ -508,6 +981,22 @@ def main() -> int:
         return print_status(orchestrator_root)
     if args.run_next:
         return run_next(orchestrator_root)
+    if args.run_loop:
+        try:
+            return run_loop(orchestrator_root)
+        except Exception as exc:
+            project_root = (orchestrator_root / os.getenv("PROJECT_ROOT", "..")).resolve()
+            discord_notifier.notify(f"[ORCHESTRATOR · ERROR] {type(exc).__name__}: {exc}")
+            _log_loop_activity(
+                project_root,
+                "Run loop",
+                "loop",
+                "Unhandled exception",
+                "error",
+                f"{type(exc).__name__}: {exc}",
+                validation="Failed",
+            )
+            return 1
     if args.phase_review:
         return phase_review(orchestrator_root)
     if args.validate:
