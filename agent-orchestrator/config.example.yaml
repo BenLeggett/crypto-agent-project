@@ -11,10 +11,14 @@ local_llm_medium_model: "llama-3.1-8b-instruct"
 # Timeout and output controls for routine low-tier local model calls.
 local_llm_low_timeout_seconds: 30
 local_llm_low_max_tokens: 256
+local_llm_low_keep_alive: "30m"
 # Warmup and review controls for medium-tier validation failure diagnostics.
 local_llm_medium_warmup_timeout_seconds: 120
 local_llm_medium_timeout_seconds: 180
 local_llm_medium_max_tokens: 600
+local_llm_medium_keep_alive: "60m"
+local_llm_preload_on_start: true
+local_llm_preload_medium_on_start: true
 local_llm_unload_medium_after_review: false
 # Retry local diagnostic calls when the local model is loading or briefly unavailable.
 local_llm_retry_attempts: 2

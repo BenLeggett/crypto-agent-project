@@ -68,6 +68,7 @@ def complete(
     max_tokens: int = 600,
     temperature: float = 0.2,
     timeout: float | None = None,
+    keep_alive: str | int | None = None,
 ) -> str:
     """Send a chat completion request to the local LLM server."""
     if requests is None:
@@ -83,6 +84,8 @@ def complete(
         "max_tokens": max_tokens,
         "temperature": temperature,
     }
+    if keep_alive is not None and str(keep_alive).strip() != "":
+        payload["keep_alive"] = keep_alive
     attempts = _retry_attempts()
     response = None
     last_connection_error = ""
@@ -138,6 +141,7 @@ def warmup_model(
     base_url: str,
     timeout: float,
     strict: bool = False,
+    keep_alive: str | int | None = None,
 ) -> bool:
     """Warm a local model with a tiny request before a heavier review."""
     try:
@@ -148,6 +152,7 @@ def warmup_model(
             max_tokens=8,
             temperature=0.0,
             timeout=timeout,
+            keep_alive=keep_alive,
         )
     except Exception:
         if strict:

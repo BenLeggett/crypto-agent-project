@@ -31,6 +31,14 @@ def _int_config(config: dict, key: str, default: int) -> int:
     return int(value)
 
 
+def _optional_config(config: dict, key: str, default: str | None = None) -> str | None:
+    """Return an optional string config value."""
+    value = config.get(key)
+    if value is None or str(value).strip() == "":
+        return default
+    return str(value)
+
+
 def assemble_prompt(template_path: str, task_context: str) -> str:
     """Return a placeholder rendered prompt."""
     _ = (template_path, task_context)
@@ -50,6 +58,7 @@ def run_model_prompt(template_path: str, context: str, model_tier: object, confi
             _required_config(config, "LOCAL_LLM_BASE_URL"),
             max_tokens=_int_config(config, "LOCAL_LLM_LOW_MAX_TOKENS", 256),
             timeout=_float_config(config, "LOCAL_LLM_LOW_TIMEOUT_SECONDS", 30),
+            keep_alive=_optional_config(config, "LOCAL_LLM_LOW_KEEP_ALIVE", "30m"),
         )
     if tier == ModelTier.LOCAL_MEDIUM:
         return local_llm_client.complete(
@@ -58,6 +67,7 @@ def run_model_prompt(template_path: str, context: str, model_tier: object, confi
             _required_config(config, "LOCAL_LLM_BASE_URL"),
             max_tokens=_int_config(config, "LOCAL_LLM_MEDIUM_MAX_TOKENS", 600),
             timeout=_float_config(config, "LOCAL_LLM_MEDIUM_TIMEOUT_SECONDS", 180),
+            keep_alive=_optional_config(config, "LOCAL_LLM_MEDIUM_KEEP_ALIVE", "60m"),
         )
     if tier == ModelTier.CLOUD_HIGH:
         return cloud_llm_client.complete(

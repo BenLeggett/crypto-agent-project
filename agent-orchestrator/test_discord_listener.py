@@ -1,6 +1,8 @@
 from __future__ import annotations
 
 import importlib.util
+import asyncio
+import os
 import sqlite3
 import sys
 import tempfile
@@ -254,7 +256,7 @@ class DiscordListenerTests(unittest.TestCase):
 
         self.assertEqual(
             listener._webhook_update_kind(failure_message),
-            "validation_failure_review_expected",
+            "controls",
         )
         self.assertEqual(
             listener._webhook_update_kind("[ORCHESTRATOR - MEDIUM REVIEW START]\nReviewing."),
@@ -373,6 +375,7 @@ class DiscordListenerTests(unittest.TestCase):
             self.assertIn("Status", labels)
             self.assertIn("Explain", labels)
             self.assertIn("Resume", labels)
+            self.assertIn("Deep Diagnose", labels)
             self.assertIn("Approve phase-10-exit", labels)
             self.assertIn("Reject phase-10-exit", labels)
 
@@ -432,6 +435,140 @@ class DiscordListenerTests(unittest.TestCase):
             self.assertIn("Explain is unavailable", response)
             self.assertIn("Reviewing diagnosis", card)
             self.assertIn("Wait for the medium review result", card)
+
+    def test_low_diagnosis_rebuilds_context_and_records_result(self) -> None:
+        listener = load_listener_module()
+
+        with tempfile.TemporaryDirectory() as temp_dir:
+            db_path = self._create_project_db(Path(temp_dir))
+            listener.operator_events.record_event(
+                db_path,
+                "validation_failed",
+                task_id=38,
+                phase="Phase 10 - AI router and cost controls",
+                title="Implement AI router core",
+                status="failed",
+                summary="make test failed",
+                details={"errors": ["make test failed"], "warnings": []},
+            )
+            old_low_review = listener.validation_failure_review.review_validation_failure_with_low_model
+            calls: list[str] = []
+            try:
+                listener.validation_failure_review.review_validation_failure_with_low_model = (
+                    lambda context, config: calls.append(context)
+                    or {
+                        "review_available": True,
+                        "model_used": "llama3.2:3b",
+                        "summary": "Likely failing test; run unittest target.",
+                    }
+                )
+
+                listener._run_low_diagnosis_once(str(db_path))
+            finally:
+                listener.validation_failure_review.review_validation_failure_with_low_model = old_low_review
+
+            self.assertEqual(len(calls), 1)
+            self.assertIn("Validator Errors", calls[0])
+            self.assertIn("make test failed", calls[0])
+            connection = sqlite3.connect(db_path)
+            try:
+                event_types = [
+                    row[0]
+                    for row in connection.execute(
+                        "SELECT event_type FROM operator_events ORDER BY event_id"
+                    ).fetchall()
+                ]
+            finally:
+                connection.close()
+            self.assertIn("low_diagnosis_done", event_types)
+
+    def test_deep_diagnose_records_running_and_medium_result(self) -> None:
+        listener = load_listener_module()
+
+        with tempfile.TemporaryDirectory() as temp_dir:
+            db_path = self._create_project_db(Path(temp_dir))
+            listener.operator_events.record_event(
+                db_path,
+                "validation_failed",
+                task_id=38,
+                phase="Phase 10 - AI router and cost controls",
+                title="Implement AI router core",
+                status="failed",
+                summary="make test failed",
+                details={"errors": ["make test failed"], "warnings": []},
+            )
+            old_medium_review = listener.validation_failure_review.review_validation_failure_with_medium_model
+            try:
+                listener.validation_failure_review.review_validation_failure_with_medium_model = (
+                    lambda context, config: {
+                        "review_available": True,
+                        "model_used": "gemma4:latest",
+                        "summary": "1. Probable cause\nA unit test failed.",
+                    }
+                )
+
+                listener.operator_events.record_event(
+                    db_path,
+                    "medium_review_running",
+                    task_id=38,
+                    phase="Phase 10 - AI router and cost controls",
+                    title="Implement AI router core",
+                    status="reviewing",
+                    summary="Running explicit Deep Diagnose.",
+                )
+                self.assertEqual(listener._button_actions_for_state(str(db_path)), [])
+                listener._run_medium_diagnosis_once(str(db_path))
+            finally:
+                listener.validation_failure_review.review_validation_failure_with_medium_model = old_medium_review
+
+            actions = listener._button_actions_for_state(str(db_path))
+            labels = [str(action["label"]) for action in actions]
+            self.assertIn("Deep Diagnose", labels)
+            card = listener._task_run_card(str(db_path))
+            self.assertIn("Diagnosis ready", card)
+
+    def test_startup_preload_records_readiness_events(self) -> None:
+        listener = load_listener_module()
+
+        with tempfile.TemporaryDirectory() as temp_dir:
+            db_path = self._create_project_db(Path(temp_dir))
+            old_env = {
+                "LOCAL_LLM_LOW_MODEL": os.environ.get("LOCAL_LLM_LOW_MODEL"),
+                "LOCAL_LLM_MEDIUM_MODEL": os.environ.get("LOCAL_LLM_MEDIUM_MODEL"),
+                "LOCAL_LLM_PRELOAD_ON_START": os.environ.get("LOCAL_LLM_PRELOAD_ON_START"),
+                "LOCAL_LLM_PRELOAD_MEDIUM_ON_START": os.environ.get("LOCAL_LLM_PRELOAD_MEDIUM_ON_START"),
+            }
+            old_warmup = listener.local_llm_client.warmup_model
+            try:
+                os.environ["LOCAL_LLM_LOW_MODEL"] = "llama3.2:3b"
+                os.environ["LOCAL_LLM_MEDIUM_MODEL"] = "gemma4:latest"
+                os.environ["LOCAL_LLM_PRELOAD_ON_START"] = "true"
+                os.environ["LOCAL_LLM_PRELOAD_MEDIUM_ON_START"] = "true"
+                listener.local_llm_client.warmup_model = lambda *args, **kwargs: True
+
+                asyncio.run(listener._preload_local_models_on_startup(str(db_path)))
+            finally:
+                listener.local_llm_client.warmup_model = old_warmup
+                for key, value in old_env.items():
+                    if value is None:
+                        os.environ.pop(key, None)
+                    else:
+                        os.environ[key] = value
+
+            connection = sqlite3.connect(db_path)
+            try:
+                event_types = [
+                    row[0]
+                    for row in connection.execute(
+                        "SELECT event_type FROM operator_events ORDER BY event_id"
+                    ).fetchall()
+                ]
+            finally:
+                connection.close()
+            self.assertIn("local_low_preloading", event_types)
+            self.assertIn("local_low_ready", event_types)
+            self.assertIn("local_medium_preloading", event_types)
+            self.assertIn("local_medium_ready", event_types)
 
     def test_unknown_command_help_includes_explain(self) -> None:
         listener = load_listener_module()

@@ -25,9 +25,11 @@ class LocalLLMClientTests(unittest.TestCase):
 
             def __init__(self) -> None:
                 self.calls = 0
+                self.payloads: list[dict[str, object]] = []
 
             def post(self, *args: object, **kwargs: object) -> object:
                 self.calls += 1
+                self.payloads.append(dict(kwargs.get("json") or {}))
                 if self.calls == 1:
                     raise RuntimeError("model still loading")
                 return FakeResponse()
@@ -47,10 +49,12 @@ class LocalLLMClientTests(unittest.TestCase):
                     "Reply with OK only.",
                     "gemma4:latest",
                     "http://localhost:11434/v1",
+                    keep_alive="30m",
                 ),
                 "OK",
             )
             self.assertEqual(fake_requests.calls, 2)
+            self.assertEqual(fake_requests.payloads[0]["keep_alive"], "30m")
         finally:
             local_llm_client.requests = old_requests
             local_llm_client.time.sleep = old_sleep
@@ -109,6 +113,7 @@ class LocalLLMClientTests(unittest.TestCase):
                     "gemma4:latest",
                     "http://localhost:11434/v1",
                     timeout=120,
+                    keep_alive="60m",
                 )
             )
         finally:
@@ -118,6 +123,7 @@ class LocalLLMClientTests(unittest.TestCase):
         self.assertEqual(calls[0]["max_tokens"], 8)
         self.assertEqual(calls[0]["temperature"], 0.0)
         self.assertEqual(calls[0]["timeout"], 120)
+        self.assertEqual(calls[0]["keep_alive"], "60m")
 
     def test_warmup_model_returns_false_on_failure(self) -> None:
         old_complete = local_llm_client.complete

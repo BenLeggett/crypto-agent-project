@@ -62,10 +62,8 @@ python agent-orchestrator/discord_listener.py
 
 Supported operator commands are `!status`, `!approve <ref>`, `!reject <ref>
 <notes>`, `!pause`, `!resume`, and read-only `!explain`. In Discord mode, only
-the latest bot-owned message has action buttons. When a new command or webhook
-update arrives, older bot buttons are removed; webhook-only orchestrator updates
-are followed by a fresh bot controls message so the newest message has the
-currently useful actions.
+the latest bot-owned message has action buttons. Failed idle tasks also show a
+`Deep Diagnose` button for explicit medium-model review.
 
 Slow typed commands post action-specific progress text first with no buttons,
 then replace it with the result and buttons. Button clicks use Discord's native
@@ -76,19 +74,24 @@ message. When old buttons are removed, the old bot message is annotated with
 the action selected and the current wait target.
 
 The `!explain` command summarizes current SQLite status, recent `ACTIVITY.MD`,
-paused state, and a `last_prompt.md` excerpt through the local medium model. If
+paused state, the latest advisory diagnosis, and a `last_prompt.md` excerpt
+through the local low model. If
 the model call fails, it returns a deterministic explanation plus the local
 model failure reason. A reachable `/v1/models` endpoint proves the server is up,
 but the chat call can still fail if the configured model name does not match an
 installed Ollama model, if `/chat/completions` rejects the request, or if the
 model load exceeds the configured tier timeout. Routine operator summaries use
 the low local model with `LOCAL_LLM_LOW_TIMEOUT_SECONDS` and
-`LOCAL_LLM_LOW_MAX_TOKENS`; validation-failure review warms the medium model
-with `LOCAL_LLM_MEDIUM_WARMUP_TIMEOUT_SECONDS`, then reviews with
-`LOCAL_LLM_MEDIUM_TIMEOUT_SECONDS` and `LOCAL_LLM_MEDIUM_MAX_TOKENS`. Local calls
-retry according to `LOCAL_LLM_RETRY_ATTEMPTS`; webhook delivery retries
-transient Discord `429` and `5xx` responses according to
-`DISCORD_WEBHOOK_RETRY_ATTEMPTS`.
+`LOCAL_LLM_LOW_MAX_TOKENS`; automatic validation-failure diagnosis uses the low
+model asynchronously after the deterministic loop has already marked the task
+failed and paused. `Deep Diagnose` warms and reviews with the medium model using
+`LOCAL_LLM_MEDIUM_WARMUP_TIMEOUT_SECONDS`,
+`LOCAL_LLM_MEDIUM_TIMEOUT_SECONDS`, and `LOCAL_LLM_MEDIUM_MAX_TOKENS`. Ollama
+residency is requested with `LOCAL_LLM_LOW_KEEP_ALIVE` and
+`LOCAL_LLM_MEDIUM_KEEP_ALIVE`; the listener preloads local models on startup
+when `LOCAL_LLM_PRELOAD_ON_START=true`. Local calls retry according to
+`LOCAL_LLM_RETRY_ATTEMPTS`; webhook delivery retries transient Discord `429`
+and `5xx` responses according to `DISCORD_WEBHOOK_RETRY_ATTEMPTS`.
 
 The Discord listener renders one evolving task run card from durable
 `operator_events` stored in `state.sqlite`; routine run-loop state changes no
@@ -97,10 +100,10 @@ is rendered as an embed with separate status, progress, current-step, finding,
 and next-action fields so the layout stays readable as text changes. Button
 interactions always complete their deferred Discord response, which prevents the
 native thinking indicator from hanging after the card updates. During validation
-and medium review, card buttons are hidden and `!explain` is blocked so the low
-model does not compete with the medium review. Failed tasks still remain
-`failed`, the loop still sets `paused=1`, and `!resume` only means the operator
-is ready to re-run validation. Empty medium-model responses are treated as
+and explicit medium review, card buttons are hidden and `!explain` is blocked so
+the low model does not compete with active review work. Failed tasks still
+remain `failed`, the loop still sets `paused=1`, and `!resume` only means the
+operator is ready to re-run validation. Empty model responses are treated as
 unavailable rather than posted as blank diagnoses.
 
 Secrets are never required for this slice. Use `.env.example` as a placeholder

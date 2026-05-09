@@ -283,9 +283,13 @@ CODEX_MODE=manual            # manual | auto — controls Mode A vs B behaviour 
 LOCAL_VALIDATION_SUMMARY=failures_only  # failures_only | always | off; advisory local diagnostics
 LOCAL_LLM_LOW_TIMEOUT_SECONDS=30        # routine low local model timeout
 LOCAL_LLM_LOW_MAX_TOKENS=256            # routine low local model output cap
+LOCAL_LLM_LOW_KEEP_ALIVE=30m            # Ollama residency request for low local calls
 LOCAL_LLM_MEDIUM_WARMUP_TIMEOUT_SECONDS=120 # medium model cold-start warmup timeout
 LOCAL_LLM_MEDIUM_TIMEOUT_SECONDS=180    # validation failure review timeout
 LOCAL_LLM_MEDIUM_MAX_TOKENS=600         # validation failure review output cap
+LOCAL_LLM_MEDIUM_KEEP_ALIVE=60m         # Ollama residency request for medium local calls
+LOCAL_LLM_PRELOAD_ON_START=true         # warm low model when Discord listener starts
+LOCAL_LLM_PRELOAD_MEDIUM_ON_START=true  # warm medium model on listener startup, best effort
 LOCAL_LLM_UNLOAD_MEDIUM_AFTER_REVIEW=false # optional best-effort Ollama unload
 LOCAL_LLM_RETRY_ATTEMPTS=2              # retry local model startup/connection hiccups
 LOCAL_LLM_RETRY_BACKOFF_SECONDS=1       # local model retry delay baseline
@@ -296,23 +300,26 @@ DISCORD_WEBHOOK_RETRY_BACKOFF_SECONDS=1 # Discord webhook retry delay baseline
 ### Local diagnostics and operator explanation
 
 Validation remains deterministic and model-free. When validation fails, the
-run-loop posts the validator failure first, then warms the medium local model
-with a tiny request before the advisory failure review. The context is compact:
-task id/title, failed validation command, validator error/warning summary,
-relevant task file paths, and recent `ACTIVITY.MD` entries. It does not include
-`.env`, secrets, live config paths, full file contents, or full git patches. If
-the medium model is unavailable or times out during warmup/review, the task still
-remains `failed`, `paused=1` is still set, and the operator receives a
-medium-review-unavailable notice with the underlying connection/timeout/status
-detail when available.
+run-loop immediately marks the task `failed`, records `validation_failed`, sets
+`paused=1`, and restores idle card controls. The Discord listener then rebuilds
+compact failure context from SQLite/activity and runs a low-model diagnosis in
+the background. Medium diagnosis is explicit only: the `Deep Diagnose` button
+records `medium_review_running`, hides buttons, blocks `!explain`, and runs the
+medium review asynchronously. The context is compact: task id/title, validator
+error/warning summary, task notes, and recent `ACTIVITY.MD` entries. It does not
+include `.env`, secrets, live config paths, full file contents, or full git
+patches. If either model is unavailable or times out, the task still remains
+`failed`, `paused=1` remains set, and the card records an unavailable diagnosis
+with the underlying connection/timeout/status detail when available.
 
 The Discord listener also supports read-only `!explain`. It must not mutate task
 rows, settings, approvals, prompt files, phase state, or approval state. It uses
 `prompts/latest_action_explain.md` with `LOCAL_LOW` over compact SQLite
-status, paused state, recent activity, and a prompt excerpt. It intentionally
-does not include git diff summaries so operator context stays compact. If the
-local model fails, it returns a deterministic explanation from SQLite status and
-recent activity plus the local model failure reason.
+status, paused state, latest advisory diagnosis, recent activity, and a prompt
+excerpt. It intentionally does not include git diff summaries so operator
+context stays compact. If the local model fails, it returns a deterministic
+explanation from SQLite status and recent activity plus the local model failure
+reason.
 
 In Discord mode, the listener renders one evolving task run card from durable
 `operator_events` in `state.sqlite`. The card shows the active task, compact
@@ -322,9 +329,10 @@ collapsed repeated timeline steps, capped text lengths, and operator-friendly
 wording for deterministic failures such as forbidden `.env` edits. Button
 callbacks always send a followup after deferring so Discord's native thinking
 indicator clears after the card update. Routine run-loop transitions such as
-prompt-ready, resume, validating, validation failed, medium-review running,
-medium-review done, paused, and task-done are SQLite events rather than public
-webhook spam. During validation or medium review, buttons are removed and
+prompt-ready, resume, validating, validation failed, low diagnosis done,
+medium-review running, medium-review done, paused, task-done, and model preload
+readiness are SQLite events rather than public webhook spam. During validation
+or explicit medium review, buttons are removed and
 Discord's typing indicator shows that the system is working. `!explain` is
 blocked while review is in flight so the low model does not compete with the
 medium diagnostic call. When the listener restarts, it recovers or recreates the

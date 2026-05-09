@@ -32,7 +32,6 @@ class RunLoopManualModeTests(unittest.TestCase):
         self._old_validate = orchestrator.validator.validate
         self._old_assemble_prompt = orchestrator.prompt_runner.assemble_prompt
         self._old_run_model_prompt = orchestrator.prompt_runner.run_model_prompt
-        self._old_review_validation_failure = orchestrator.review_validation_failure_with_medium_model
         self._old_sleep = orchestrator.time.sleep
         self.notifications: list[str] = []
         self.validation_calls: list[str] = []
@@ -52,7 +51,6 @@ class RunLoopManualModeTests(unittest.TestCase):
         orchestrator.validator.validate = self._old_validate
         orchestrator.prompt_runner.assemble_prompt = self._old_assemble_prompt
         orchestrator.prompt_runner.run_model_prompt = self._old_run_model_prompt
-        orchestrator.review_validation_failure_with_medium_model = self._old_review_validation_failure
         orchestrator.time.sleep = self._old_sleep
 
     def _write_project(self, root: Path) -> Path:
@@ -230,7 +228,7 @@ class RunLoopManualModeTests(unittest.TestCase):
             self.assertIn("task_done", event_types)
             self.assertEqual(self.notifications, [])
 
-    def test_manual_validation_failure_posts_local_diagnosis_and_remains_paused(self) -> None:
+    def test_manual_validation_failure_pauses_without_medium_review(self) -> None:
         with tempfile.TemporaryDirectory() as temp_dir:
             orchestrator_root = self._write_project(Path(temp_dir))
             db_path = orchestrator_root / "state.sqlite"
@@ -247,36 +245,22 @@ class RunLoopManualModeTests(unittest.TestCase):
                 "warnings": [],
                 "diff_summary": "agent-orchestrator/orchestrator.py | 12 ++++++",
             }
-            orchestrator.review_validation_failure_with_medium_model = (
-                lambda context, config: self.medium_review_calls.append((context, config))
-                or {
-                    "review_available": True,
-                    "model_used": "gemma4:latest",
-                    "summary": "1. Probable cause\nTests failed.\n3. Safest next debugging step\nRun the targeted test.",
-                    "fallback_recommended": False,
-                }
-            )
-
             self.assertEqual(orchestrator.run_loop(orchestrator_root, max_iterations=1), 0)
 
             status, paused = self._status_and_paused(db_path)
             self.assertEqual(status, "failed")
             self.assertEqual(paused, "1")
             self.assertEqual(self.assemble_calls, [])
-            self.assertEqual(len(self.medium_review_calls), 1)
-            self.assertIn("## Active Task", self.medium_review_calls[0][0])
-            self.assertIn("make test failed", self.medium_review_calls[0][0])
-            self.assertIn("apps/ai_router/router.py", self.medium_review_calls[0][0])
-            self.assertNotIn("Git Diff Stat", self.medium_review_calls[0][0])
+            self.assertEqual(self.medium_review_calls, [])
             event_types = [row[0] for row in self._operator_events(db_path)]
             failure_index = event_types.index("validation_failed")
-            start_index = event_types.index("medium_review_running")
-            diagnosis_index = event_types.index("medium_review_done")
-            self.assertLess(failure_index, start_index)
-            self.assertLess(start_index, diagnosis_index)
+            paused_index = event_types.index("paused")
+            self.assertLess(failure_index, paused_index)
+            self.assertNotIn("medium_review_running", event_types)
+            self.assertNotIn("medium_review_done", event_types)
             self.assertEqual(self.notifications, [])
 
-    def test_manual_validation_failure_posts_unavailable_notice_when_local_model_fails(self) -> None:
+    def test_manual_validation_failure_records_failure_details_for_listener_diagnosis(self) -> None:
         with tempfile.TemporaryDirectory() as temp_dir:
             orchestrator_root = self._write_project(Path(temp_dir))
             db_path = orchestrator_root / "state.sqlite"
@@ -290,13 +274,6 @@ class RunLoopManualModeTests(unittest.TestCase):
                 "diff_summary": "agent-orchestrator/discord_listener.py | 4 ++",
             }
 
-            orchestrator.review_validation_failure_with_medium_model = lambda context, config: {
-                "review_available": False,
-                "model_used": "none",
-                "summary": "Medium local model unavailable or timed out during warmup.",
-                "fallback_recommended": True,
-            }
-
             self.assertEqual(orchestrator.run_loop(orchestrator_root, max_iterations=1), 0)
 
             status, paused = self._status_and_paused(db_path)
@@ -306,9 +283,9 @@ class RunLoopManualModeTests(unittest.TestCase):
             events = self._operator_events(db_path)
             event_types = [row[0] for row in events]
             self.assertIn("validation_failed", event_types)
-            self.assertIn("medium_review_running", event_types)
-            self.assertIn("medium_review_done", event_types)
-            self.assertTrue(any("Diagnosis unavailable" in row[2] for row in events))
+            self.assertIn("paused", event_types)
+            self.assertNotIn("medium_review_running", event_types)
+            self.assertTrue(any("make lint failed" in row[2] for row in events))
             self.assertEqual(self.notifications, [])
 
     def test_manual_failed_task_resume_revalidates_without_reprompting(self) -> None:

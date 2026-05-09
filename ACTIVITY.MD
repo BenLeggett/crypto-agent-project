@@ -1,5 +1,11 @@
 ﻿# Activity Log
 
+## 2026-05-09
+- Implemented local LLM preload and staged validation diagnosis for the agent orchestrator.
+- Added Ollama `keep_alive` controls for low and medium local calls, startup preload readiness events, automatic async low diagnosis after validation failure, and explicit `Deep Diagnose` medium review.
+- Updated the run-loop failure path so deterministic validation marks tasks failed and sets `paused=1` before any advisory model work can run.
+- Updated README/config/docs/tests for the new operator workflow and model residency settings.
+
 ## 2026-04-22
 - Regenerated the merged Codex implementation packet from the two uploaded source documents after prior exported files were no longer available in the workspace.
 - Recreated these artifacts:

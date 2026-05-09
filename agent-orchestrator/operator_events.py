@@ -157,7 +157,18 @@ def latest_event(connection: sqlite3.Connection) -> sqlite3.Row | None:
 
 def operator_in_flight(connection: sqlite3.Connection) -> bool:
     """Return whether the latest operator event represents active work."""
-    row = latest_event(connection)
+    relevant_types = tuple(sorted(IN_FLIGHT_EVENT_TYPES | TERMINAL_EVENT_TYPES))
+    placeholders = ",".join("?" for _ in relevant_types)
+    row = connection.execute(
+        f"""
+        SELECT *
+        FROM operator_events
+        WHERE event_type IN ({placeholders})
+        ORDER BY event_id DESC
+        LIMIT 1
+        """,
+        relevant_types,
+    ).fetchone()
     if row is None:
         return False
     event_type = str(row["event_type"])

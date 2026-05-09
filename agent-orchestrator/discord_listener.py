@@ -1,9 +1,11 @@
 from __future__ import annotations
 
 import asyncio
+import json
 import os
 import sqlite3
 import sys
+import threading
 from contextlib import closing, suppress
 from datetime import datetime
 from pathlib import Path
@@ -21,6 +23,8 @@ if str(MODULE_ROOT) not in sys.path:
 
 import prompt_runner
 import operator_events
+import local_llm_client
+import validation_failure_review
 from model_router import ModelTier
 
 
@@ -32,6 +36,7 @@ CARD_PROGRESS_LIMIT = 420
 UNKNOWN_COMMAND_MESSAGE = (
     "Unknown command. Available: !status !approve !reject !pause !resume !explain"
 )
+DEEP_DIAGNOSE_COMMAND = "!deep-diagnose"
 MEDIUM_REVIEW_START_PREFIX = "[ORCHESTRATOR - MEDIUM REVIEW START]"
 MEDIUM_REVIEW_DONE_PREFIXES = (
     "[ORCHESTRATOR - MEDIUM LOCAL REVIEW]",
@@ -218,6 +223,22 @@ def _event_label(event_type: str, status: str | None = None) -> str:
         return "Validating"
     if event_type == "validation_failed":
         return "Failed"
+    if event_type == "low_diagnosis_done":
+        return "Fast diagnosis ready"
+    if event_type == "low_diagnosis_unavailable":
+        return "Fast diagnosis unavailable"
+    if event_type == "local_low_preloading":
+        return "Low model preloading"
+    if event_type == "local_low_ready":
+        return "Low model ready"
+    if event_type == "local_low_unavailable":
+        return "Low model unavailable"
+    if event_type == "local_medium_preloading":
+        return "Medium model preloading"
+    if event_type == "local_medium_ready":
+        return "Medium model ready"
+    if event_type == "local_medium_unavailable":
+        return "Medium model unavailable"
     if event_type == "medium_review_running":
         return "Reviewing diagnosis"
     if event_type == "medium_review_done":
@@ -257,6 +278,8 @@ def _card_status(latest_event: sqlite3.Row | None, task_status: str | None) -> s
         if event_type == "validating":
             return "Validating"
         if event_type == "validation_failed":
+            return "Failed validation"
+        if event_type in {"low_diagnosis_done", "low_diagnosis_unavailable"}:
             return "Failed validation"
         if event_type == "medium_review_done":
             return "Failed validation"
@@ -318,11 +341,62 @@ def _latest_finding(events: list[sqlite3.Row]) -> str:
     """Return the latest failure or diagnosis summary for the card."""
     for row in reversed(events):
         event_type = str(row["event_type"])
-        if event_type in {"medium_review_done", "validation_failed"}:
+        if event_type in {
+            "medium_review_done",
+            "low_diagnosis_done",
+            "low_diagnosis_unavailable",
+            "validation_failed",
+        }:
             summary = str(row["summary"] or "").strip()
             if summary:
                 return _card_excerpt(_friendly_summary(summary))
     return "No findings yet."
+
+
+def _model_readiness_line(events: list[sqlite3.Row]) -> str:
+    """Return one compact model residency/readiness line for the card."""
+    latest_by_prefix: dict[str, sqlite3.Row] = {}
+    for row in events:
+        event_type = str(row["event_type"])
+        if event_type.startswith("local_low_"):
+            latest_by_prefix["low"] = row
+        elif event_type.startswith("local_medium_"):
+            latest_by_prefix["medium"] = row
+
+    def label(prefix: str) -> str:
+        row = latest_by_prefix.get(prefix)
+        if row is None:
+            return "unknown"
+        event_type = str(row["event_type"])
+        if event_type.endswith("_preloading"):
+            return "warming"
+        if event_type.endswith("_ready"):
+            return "ready"
+        if event_type.endswith("_unavailable"):
+            return "unavailable"
+        return "unknown"
+
+    return f"Low: {label('low')} | Medium: {label('medium')}"
+
+
+def _latest_diagnosis_summary(connection: sqlite3.Connection) -> str:
+    """Return the latest advisory diagnosis for explanation context."""
+    row = connection.execute(
+        """
+        SELECT event_type, summary
+        FROM operator_events
+        WHERE event_type IN (
+            'low_diagnosis_done',
+            'low_diagnosis_unavailable',
+            'medium_review_done'
+        )
+        ORDER BY event_id DESC
+        LIMIT 1
+        """
+    ).fetchone()
+    if row is None or not str(row["summary"] or "").strip():
+        return "No advisory diagnosis has been recorded yet."
+    return _card_excerpt(_friendly_summary(str(row["summary"])), limit=900)
 
 
 def _next_card_action(connection: sqlite3.Connection, latest_event: sqlite3.Row | None, task_status: str | None) -> str:
@@ -387,7 +461,7 @@ def _legacy_task_run_card(db_path: str) -> str:
 def _task_run_card_payload(db_path: str) -> dict[str, object]:
     """Build stable content and fields for the Discord task run card."""
     with closing(_connect(db_path)) as connection:
-        events = operator_events.recent_events(connection, limit=7)
+        events = operator_events.recent_events(connection, limit=30)
         latest_event = events[-1] if events else None
         task_row = _active_task_row(connection)
         task_id = task_row["task_id"] if task_row is not None else (
@@ -410,6 +484,7 @@ def _task_run_card_payload(db_path: str) -> dict[str, object]:
         )
         finding = _latest_finding(events)
         next_action = _next_card_action(connection, latest_event, task_status)
+        models = _model_readiness_line(events)
 
     return {
         "content": "[ORCHESTRATOR] Task Run Card",
@@ -418,6 +493,7 @@ def _task_run_card_payload(db_path: str) -> dict[str, object]:
         "progress": _card_excerpt(timeline, limit=CARD_PROGRESS_LIMIT),
         "current": _card_excerpt(current),
         "finding": _card_excerpt(finding),
+        "models": _card_excerpt(models, limit=120),
         "next": _card_excerpt(_format_file_hints(next_action)),
     }
 
@@ -440,6 +516,9 @@ def _task_run_card(db_path: str) -> str:
                 "",
                 "Finding:",
                 str(payload["finding"]),
+                "",
+                "Models:",
+                str(payload["models"]),
                 "",
                 "Next Action:",
                 str(payload["next"]),
@@ -585,13 +664,6 @@ def _webhook_update_kind(content: str) -> str:
         return "medium_review_start"
     if any(content.startswith(prefix) for prefix in MEDIUM_REVIEW_DONE_PREFIXES):
         return "medium_review_done"
-    if (
-        _local_validation_summary_mode() != "off"
-        and content.startswith("[ORCHESTRATOR")
-        and "FAILURE]" in content
-        and "Validation failed:" in content
-    ):
-        return "validation_failure_review_expected"
     return "controls"
 
 
@@ -622,9 +694,328 @@ def _model_config_from_env() -> dict[str, str | None]:
         "LOCAL_LLM_MEDIUM_MODEL": os.getenv("LOCAL_LLM_MEDIUM_MODEL"),
         "LOCAL_LLM_LOW_TIMEOUT_SECONDS": os.getenv("LOCAL_LLM_LOW_TIMEOUT_SECONDS", "30"),
         "LOCAL_LLM_LOW_MAX_TOKENS": os.getenv("LOCAL_LLM_LOW_MAX_TOKENS", "256"),
+        "LOCAL_LLM_LOW_KEEP_ALIVE": os.getenv("LOCAL_LLM_LOW_KEEP_ALIVE", "30m"),
+        "LOCAL_LLM_MEDIUM_WARMUP_TIMEOUT_SECONDS": os.getenv(
+            "LOCAL_LLM_MEDIUM_WARMUP_TIMEOUT_SECONDS",
+            "120",
+        ),
         "LOCAL_LLM_MEDIUM_TIMEOUT_SECONDS": os.getenv("LOCAL_LLM_MEDIUM_TIMEOUT_SECONDS", "180"),
         "LOCAL_LLM_MEDIUM_MAX_TOKENS": os.getenv("LOCAL_LLM_MEDIUM_MAX_TOKENS", "600"),
+        "LOCAL_LLM_MEDIUM_KEEP_ALIVE": os.getenv("LOCAL_LLM_MEDIUM_KEEP_ALIVE", "60m"),
     }
+
+
+def _bool_env(name: str, default: bool) -> bool:
+    value = os.getenv(name)
+    if value is None or value.strip() == "":
+        return default
+    return value.strip().lower() in {"1", "true", "yes", "on"}
+
+
+def _latest_validation_failure(connection: sqlite3.Connection) -> sqlite3.Row | None:
+    return connection.execute(
+        """
+        SELECT *
+        FROM operator_events
+        WHERE event_type = 'validation_failed'
+        ORDER BY event_id DESC
+        LIMIT 1
+        """
+    ).fetchone()
+
+
+def _event_details(row: sqlite3.Row | None) -> dict[str, object]:
+    if row is None:
+        return {}
+    try:
+        data = json.loads(str(row["details_json"] or "{}"))
+    except json.JSONDecodeError:
+        return {}
+    return data if isinstance(data, dict) else {}
+
+
+def _diagnosis_context_from_sqlite(db_path: str) -> tuple[str, dict[str, object]] | None:
+    """Rebuild compact validation-failure context after the loop has paused."""
+    with closing(_connect(db_path)) as connection:
+        failure = _latest_validation_failure(connection)
+        if failure is None:
+            return None
+        task_id = failure["task_id"]
+        task_row = None
+        if task_id is not None:
+            task_row = connection.execute(
+                """
+                SELECT task_id, phase, title, status, notes
+                FROM tasks
+                WHERE task_id = ?
+                """,
+                (task_id,),
+            ).fetchone()
+        details = _event_details(failure)
+        errors = details.get("errors", [])
+        warnings = details.get("warnings", [])
+        if not isinstance(errors, list):
+            errors = [str(errors)]
+        if not isinstance(warnings, list):
+            warnings = [str(warnings)]
+
+        phase = str(
+            task_row["phase"]
+            if task_row is not None and task_row["phase"]
+            else failure["phase"] or "unknown phase"
+        )
+        title = str(
+            task_row["title"]
+            if task_row is not None and task_row["title"]
+            else failure["title"] or "Unknown task"
+        )
+        status = str(task_row["status"] if task_row is not None else failure["status"] or "failed")
+        notes = str(task_row["notes"] if task_row is not None and task_row["notes"] else "")
+        orchestrator_root = Path(db_path).resolve().parent
+        project_root = (orchestrator_root / os.getenv("PROJECT_ROOT", "..")).resolve()
+
+    error_text = "\n".join(f"- {item}" for item in errors) if errors else "- None"
+    warning_text = "\n".join(f"- {item}" for item in warnings) if warnings else "- None"
+    context = "\n\n".join(
+        [
+            "## Active Task",
+            f"Task {task_id or 'n/a'}: {title}",
+            f"Phase: {phase}",
+            f"Status: {status}",
+            "## Validator Errors",
+            _text_excerpt_from_string(error_text, limit=1400),
+            "## Validator Warnings",
+            _text_excerpt_from_string(warning_text, limit=900),
+            "## Task Notes",
+            _text_excerpt_from_string(notes or "No task notes recorded.", limit=900),
+            "## Latest ACTIVITY Entries",
+            _activity_entries(project_root / "ACTIVITY.MD", max_entries=2),
+        ]
+    )
+    task = {
+        "task_id": int(task_id) if task_id is not None else None,
+        "phase": phase,
+        "title": title,
+        "validation_event_id": int(failure["event_id"]),
+    }
+    return context, task
+
+
+def _record_diagnosis_event(
+    db_path: str,
+    event_type: str,
+    task: dict[str, object],
+    status: str,
+    summary: str,
+    details: dict[str, object] | None = None,
+) -> None:
+    operator_events.record_event(
+        db_path,
+        event_type,
+        task_id=task.get("task_id"),
+        phase=str(task.get("phase") or ""),
+        title=str(task.get("title") or ""),
+        status=status,
+        summary=_text_excerpt_from_string(summary, limit=900),
+        details=details,
+    )
+
+
+def _run_low_diagnosis_once(db_path: str) -> None:
+    """Run one fast advisory diagnosis and record a compact card event."""
+    context_and_task = _diagnosis_context_from_sqlite(db_path)
+    if context_and_task is None:
+        return
+    context, task = context_and_task
+    try:
+        review = validation_failure_review.review_validation_failure_with_low_model(
+            context,
+            _model_config_from_env(),
+        )
+    except Exception as exc:
+        review = {
+            "review_available": False,
+            "model_used": "none",
+            "summary": f"Low local diagnosis unavailable: {type(exc).__name__}: {exc}",
+        }
+
+    summary = str(review.get("summary", "")).strip()
+    available = bool(review.get("review_available"))
+    _record_diagnosis_event(
+        db_path,
+        "low_diagnosis_done" if available else "low_diagnosis_unavailable",
+        task,
+        "diagnosis_ready" if available else "diagnosis_unavailable",
+        summary if available else f"Fast diagnosis unavailable: {summary}",
+        {
+            "review_available": available,
+            "model_used": str(review.get("model_used", "none")),
+            "validation_event_id": task.get("validation_event_id"),
+        },
+    )
+
+
+def _start_pending_low_diagnosis(db_path: str) -> bool:
+    """Claim and start low diagnosis for the latest failed validation, if needed."""
+    if _local_validation_summary_mode() == "off":
+        return False
+    with closing(_connect(db_path)) as connection:
+        failure = _latest_validation_failure(connection)
+        if failure is None:
+            return False
+        validation_event_id = str(failure["event_id"])
+        if operator_events.get_ui_state(connection, "low_diagnosis_validation_event_id") == validation_event_id:
+            return False
+        operator_events.set_ui_state(connection, "low_diagnosis_validation_event_id", validation_event_id)
+
+    thread = threading.Thread(
+        target=_run_low_diagnosis_once,
+        args=(db_path,),
+        daemon=True,
+        name="low-validation-diagnosis",
+    )
+    thread.start()
+    return True
+
+
+def _run_medium_diagnosis_once(db_path: str) -> None:
+    """Run explicit medium diagnosis and restore card controls through events."""
+    context_and_task = _diagnosis_context_from_sqlite(db_path)
+    if context_and_task is None:
+        return
+    context, task = context_and_task
+    try:
+        review = validation_failure_review.review_validation_failure_with_medium_model(
+            context,
+            _model_config_from_env(),
+        )
+    except Exception as exc:
+        review = {
+            "review_available": False,
+            "model_used": "none",
+            "summary": f"Medium local review unavailable: {type(exc).__name__}: {exc}",
+        }
+
+    summary = str(review.get("summary", "")).strip()
+    available = bool(review.get("review_available"))
+    _record_diagnosis_event(
+        db_path,
+        "medium_review_done",
+        task,
+        "diagnosis_ready" if available else "diagnosis_unavailable",
+        summary if available else f"Diagnosis unavailable: {summary}",
+        {
+            "review_available": available,
+            "model_used": str(review.get("model_used", "none")),
+            "validation_event_id": task.get("validation_event_id"),
+        },
+    )
+
+
+def _start_medium_diagnosis(db_path: str) -> str:
+    """Start an explicit Deep Diagnose review if the active task is failed and idle."""
+    with closing(_connect(db_path)) as connection:
+        if operator_events.operator_in_flight(connection):
+            return "Deep Diagnose is unavailable while another operator action is running."
+        row = _active_task_row(connection)
+        if row is None or str(row["status"]).strip().lower() != "failed":
+            return "Deep Diagnose is available only for a failed idle task."
+        task_id = int(row["task_id"])
+        phase = str(row["phase"] or "")
+        title = str(row["title"] or "")
+
+    model = _model_config_from_env().get("LOCAL_LLM_MEDIUM_MODEL") or "medium local model"
+    operator_events.record_event(
+        db_path,
+        "medium_review_running",
+        task_id=task_id,
+        phase=phase,
+        title=title,
+        status="reviewing",
+        summary=f"Running explicit Deep Diagnose with {model}.",
+        details={"model": model},
+    )
+    thread = threading.Thread(
+        target=_run_medium_diagnosis_once,
+        args=(db_path,),
+        daemon=True,
+        name="medium-validation-diagnosis",
+    )
+    thread.start()
+    return "Deep Diagnose started. Buttons will return when the medium review finishes."
+
+
+async def _preload_local_model(
+    db_path: str,
+    tier: str,
+    model: str | None,
+    timeout: float,
+    keep_alive: str,
+) -> None:
+    """Warm one local model in the background and record compact readiness events."""
+    if model is None or str(model).strip() == "":
+        operator_events.record_event(
+            db_path,
+            f"local_{tier}_unavailable",
+            status="unavailable",
+            summary=f"Local {tier} model not configured.",
+        )
+        return
+
+    base_url = os.getenv("LOCAL_LLM_BASE_URL", "http://localhost:1234/v1")
+    operator_events.record_event(
+        db_path,
+        f"local_{tier}_preloading",
+        status="preloading",
+        summary=f"Warming local {tier} model.",
+        details={"model": model},
+    )
+    ok = await asyncio.to_thread(
+        local_llm_client.warmup_model,
+        str(model),
+        base_url,
+        timeout,
+        False,
+        keep_alive,
+    )
+    operator_events.record_event(
+        db_path,
+        f"local_{tier}_ready" if ok else f"local_{tier}_unavailable",
+        status="ready" if ok else "unavailable",
+        summary=f"Local {tier} model {'ready' if ok else 'unavailable during warmup'}.",
+        details={"model": model},
+    )
+
+
+async def _preload_local_models_on_startup(db_path: str) -> None:
+    """Start best-effort local model residency warmups without blocking the UI."""
+    if not _bool_env("LOCAL_LLM_PRELOAD_ON_START", True):
+        return
+
+    tasks = [
+        asyncio.create_task(
+            _preload_local_model(
+                db_path,
+                "low",
+                os.getenv("LOCAL_LLM_LOW_MODEL"),
+                float(os.getenv("LOCAL_LLM_LOW_TIMEOUT_SECONDS", "30")),
+                os.getenv("LOCAL_LLM_LOW_KEEP_ALIVE", "30m"),
+            )
+        )
+    ]
+    if _bool_env("LOCAL_LLM_PRELOAD_MEDIUM_ON_START", True):
+        tasks.append(
+            asyncio.create_task(
+                _preload_local_model(
+                    db_path,
+                    "medium",
+                    os.getenv("LOCAL_LLM_MEDIUM_MODEL"),
+                    float(os.getenv("LOCAL_LLM_MEDIUM_WARMUP_TIMEOUT_SECONDS", "120")),
+                    os.getenv("LOCAL_LLM_MEDIUM_KEEP_ALIVE", "60m"),
+                )
+            )
+        )
+    await asyncio.gather(*tasks)
 
 
 def _explain_context(connection: sqlite3.Connection, db_path: str) -> str:
@@ -642,6 +1033,8 @@ def _explain_context(connection: sqlite3.Connection, db_path: str) -> str:
             _activity_entries(project_root / "ACTIVITY.MD", max_entries=2),
             "## last_prompt.md Excerpt",
             _text_excerpt(orchestrator_root / "last_prompt.md", limit=1200),
+            "## Latest Advisory Diagnosis",
+            _latest_diagnosis_summary(connection),
         ]
     )
 
@@ -726,6 +1119,10 @@ def _button_actions_for_state(db_path: str) -> list[dict[str, object]]:
             else:
                 actions.append({"label": "Pause", "command": "!pause", "args": []})
 
+            row = _active_task_row(connection)
+            if row is not None and str(row["status"]).strip().lower() == "failed":
+                actions.append({"label": "Deep Diagnose", "command": DEEP_DIAGNOSE_COMMAND, "args": []})
+
             pending_ref = _latest_pending_approval_ref(connection)
             if pending_ref:
                 actions.append({"label": f"Approve {pending_ref}", "command": "!approve", "args": [pending_ref]})
@@ -738,7 +1135,7 @@ def _button_actions_for_state(db_path: str) -> list[dict[str, object]]:
                 )
     except sqlite3.Error:
         actions.append({"label": "Pause", "command": "!pause", "args": []})
-    return actions[:5]
+    return actions[:25]
 
 
 def _record_approval(
@@ -825,6 +1222,9 @@ def handle_command(command: str, args: list[str], db_path: str) -> str:
                     summary="Resume selected. The run loop will continue shortly.",
                 )
                 return "Orchestrator resumed."
+
+            if command == DEEP_DIAGNOSE_COMMAND:
+                return _start_medium_diagnosis(db_path)
     except sqlite3.Error as exc:
         return f"Database error: {exc}"
 
@@ -945,6 +1345,7 @@ def _run_discord_mode(bot_token: str, channel_id: int, db_path: str) -> None:
         embed.add_field(name="Progress", value=str(payload["progress"]), inline=False)
         embed.add_field(name="Current Step", value=str(payload["current"]), inline=False)
         embed.add_field(name="Finding", value=str(payload["finding"]), inline=False)
+        embed.add_field(name="Models", value=str(payload["models"]), inline=False)
         embed.add_field(name="Next Action", value=str(payload["next"]), inline=False)
         return embed
 
@@ -1121,6 +1522,8 @@ def _run_discord_mode(bot_token: str, channel_id: int, db_path: str) -> None:
             except sqlite3.Error as exc:
                 _log_stderr("event-poll", str(exc))
             if event_ids:
+                if any(str(row["event_type"]) == "validation_failed" for row in rows):
+                    _start_pending_low_diagnosis(db_path)
                 await render_task_card(channel)
                 try:
                     with closing(_connect(db_path)) as connection:
@@ -1199,6 +1602,8 @@ def _run_discord_mode(bot_token: str, channel_id: int, db_path: str) -> None:
         if channel is None:
             channel = await client.fetch_channel(channel_id)
         await render_task_card(channel)
+        _start_pending_low_diagnosis(db_path)
+        asyncio.create_task(_preload_local_models_on_startup(db_path))
         if poll_task is None:
             poll_task = asyncio.create_task(poll_operator_events(channel))
 

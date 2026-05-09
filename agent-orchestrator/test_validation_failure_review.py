@@ -19,8 +19,8 @@ class ValidationFailureReviewTests(unittest.TestCase):
         calls: list[tuple[str, dict[str, object]]] = []
         try:
             validation_failure_review.local_llm_client.warmup_model = (
-                lambda model, base_url, timeout: calls.append(
-                    ("warmup", {"model": model, "base_url": base_url, "timeout": timeout})
+                lambda model, base_url, timeout, **kwargs: calls.append(
+                    ("warmup", {"model": model, "base_url": base_url, "timeout": timeout, **kwargs})
                 )
                 or True
             )
@@ -47,6 +47,7 @@ class ValidationFailureReviewTests(unittest.TestCase):
                     "LOCAL_LLM_MEDIUM_WARMUP_TIMEOUT_SECONDS": "120",
                     "LOCAL_LLM_MEDIUM_TIMEOUT_SECONDS": "180",
                     "LOCAL_LLM_MEDIUM_MAX_TOKENS": "600",
+                    "LOCAL_LLM_MEDIUM_KEEP_ALIVE": "60m",
                 },
             )
         finally:
@@ -57,10 +58,48 @@ class ValidationFailureReviewTests(unittest.TestCase):
         self.assertEqual(result["model_used"], "gemma4:latest")
         self.assertEqual(calls[0][0], "warmup")
         self.assertEqual(calls[0][1]["timeout"], 120.0)
+        self.assertEqual(calls[0][1]["keep_alive"], "60m")
         self.assertEqual(calls[1][0], "complete")
         self.assertIn("Probable cause", str(calls[1][1]["prompt"]))
         self.assertEqual(calls[1][1]["timeout"], 180.0)
         self.assertEqual(calls[1][1]["max_tokens"], 600)
+        self.assertEqual(calls[1][1]["keep_alive"], "60m")
+
+    def test_low_review_uses_low_budget_and_keep_alive(self) -> None:
+        old_complete = validation_failure_review.local_llm_client.complete
+        calls: list[dict[str, object]] = []
+        try:
+            validation_failure_review.local_llm_client.complete = (
+                lambda prompt, model, base_url, **kwargs: calls.append(
+                    {
+                        "prompt": prompt,
+                        "model": model,
+                        "base_url": base_url,
+                        **kwargs,
+                    }
+                )
+                or "- Probable cause: test failure."
+            )
+
+            result = validation_failure_review.review_validation_failure_with_low_model(
+                "Task 38 failed make test.",
+                {
+                    "LOCAL_LLM_BASE_URL": "http://localhost:11434/v1",
+                    "LOCAL_LLM_LOW_MODEL": "llama3.2:3b",
+                    "LOCAL_LLM_LOW_TIMEOUT_SECONDS": "15",
+                    "LOCAL_LLM_LOW_MAX_TOKENS": "96",
+                    "LOCAL_LLM_LOW_KEEP_ALIVE": "30m",
+                },
+            )
+        finally:
+            validation_failure_review.local_llm_client.complete = old_complete
+
+        self.assertTrue(result["review_available"])
+        self.assertEqual(result["model_used"], "llama3.2:3b")
+        self.assertIn("fast local diagnostic", str(calls[0]["prompt"]))
+        self.assertEqual(calls[0]["timeout"], 15.0)
+        self.assertEqual(calls[0]["max_tokens"], 96)
+        self.assertEqual(calls[0]["keep_alive"], "30m")
 
     def test_review_returns_unavailable_when_warmup_fails(self) -> None:
         old_warmup = validation_failure_review.local_llm_client.warmup_model

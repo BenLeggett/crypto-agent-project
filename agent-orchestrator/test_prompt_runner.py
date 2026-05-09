@@ -37,6 +37,7 @@ class PromptRunnerLocalTierConfigTests(unittest.TestCase):
                         "LOCAL_LLM_LOW_MODEL": "small:latest",
                         "LOCAL_LLM_LOW_TIMEOUT_SECONDS": "30",
                         "LOCAL_LLM_LOW_MAX_TOKENS": "256",
+                        "LOCAL_LLM_LOW_KEEP_ALIVE": "30m",
                     },
                 )
         finally:
@@ -46,6 +47,7 @@ class PromptRunnerLocalTierConfigTests(unittest.TestCase):
         self.assertEqual(calls[0]["model"], "small:latest")
         self.assertEqual(calls[0]["timeout"], 30.0)
         self.assertEqual(calls[0]["max_tokens"], 256)
+        self.assertEqual(calls[0]["keep_alive"], "30m")
 
 
 if __name__ == "__main__":

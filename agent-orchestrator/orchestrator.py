@@ -20,7 +20,6 @@ import validator
 from validator import FORBIDDEN_PATHS
 from model_router import ModelTier
 from task_queue_reader import read_task
-from validation_failure_review import review_validation_failure_with_medium_model
 
 try:
     from dotenv import load_dotenv
@@ -646,66 +645,6 @@ def _validation_diagnosis_context(
     )
 
 
-def _post_validation_failure_diagnosis(
-    db_path: Path,
-    project_root: Path,
-    active_task: dict,
-    validation_result: dict[str, object],
-    errors: list[str],
-    warnings: list[str],
-) -> dict[str, object] | None:
-    """Run advisory local-LLM guidance after a deterministic validation failure."""
-    if _local_validation_summary_mode() == "off":
-        return None
-
-    context = _validation_diagnosis_context(
-        project_root,
-        active_task,
-        validation_result,
-        errors,
-        warnings,
-    )
-    config = _model_config_from_env()
-    model = config.get("LOCAL_LLM_MEDIUM_MODEL") or "medium local model"
-    _record_operator_event(
-        db_path,
-        "medium_review_running",
-        task=active_task,
-        phase=str(active_task.get("phase", "")),
-        status="reviewing",
-        summary=f"Running medium local review with {model}.",
-        details={"model": model},
-    )
-    try:
-        review = review_validation_failure_with_medium_model(
-            context,
-            config,
-        )
-    except Exception as exc:
-        return {
-            "review_available": False,
-            "model_used": "none",
-            "summary": f"Medium local review unavailable: {type(exc).__name__}: {exc}",
-            "fallback_recommended": True,
-        }
-
-    summary = str(review.get("summary", "")).strip()
-    review_available = bool(review.get("review_available"))
-    _record_operator_event(
-        db_path,
-        "medium_review_done",
-        task=active_task,
-        phase=str(active_task.get("phase", "")),
-        status="diagnosis_ready" if review_available else "diagnosis_unavailable",
-        summary=summary if review_available else f"Diagnosis unavailable: {summary}",
-        details={
-            "review_available": review_available,
-            "model_used": str(review.get("model_used", "none")),
-        },
-    )
-    return review
-
-
 def _manual_prompt_message(task: dict, prompt_path: Path) -> str:
     """Render the Discord message for manual prompt application."""
     prompt_text = prompt_path.read_text(encoding="utf-8")
@@ -781,26 +720,15 @@ def _run_validation_for_task(
             summary=failure_notes or "Validation failed.",
             details={"errors": errors, "warnings": warnings},
         )
-        medium_review = _post_validation_failure_diagnosis(
+        _set_paused(db_path, True)
+        _record_operator_event(
             db_path,
-            project_root,
-            active_task,
-            validation_result,
-            errors,
-            warnings,
+            "paused",
+            task=active_task,
+            phase=phase_name,
+            status="paused",
+            summary="Loop paused after failed validation. Repair manually, then resume to re-test.",
         )
-        if medium_review is None:
-            review_notes = "Medium local review skipped by LOCAL_VALIDATION_SUMMARY=off."
-        elif medium_review.get("review_available"):
-            review_notes = (
-                f"Medium local review succeeded with {medium_review.get('model_used')}: "
-                f"{_truncate_for_discord(str(medium_review.get('summary', '')), limit=500)}"
-            )
-        else:
-            review_notes = (
-                "Medium local review unavailable; validation failure logged without medium diagnosis. "
-                + _truncate_for_discord(str(medium_review.get("summary", "")), limit=500)
-            )
         _log_loop_activity(
             project_root,
             phase_name,
@@ -811,20 +739,11 @@ def _run_validation_for_task(
                 item
                 for item in [
                     failure_notes or "Validation failed with no error summary.",
-                    review_notes,
+                    "Paused immediately; listener will run fast low-model diagnosis asynchronously when available.",
                 ]
                 if item
             ),
             validation="Failed",
-        )
-        _set_paused(db_path, True)
-        _record_operator_event(
-            db_path,
-            "paused",
-            task=active_task,
-            phase=phase_name,
-            status="paused",
-            summary="Loop paused after failed validation. Repair manually, then resume to re-test.",
         )
         return False
 
@@ -1242,12 +1161,14 @@ def _model_config_from_env() -> dict[str, str | None]:
         "LOCAL_LLM_MEDIUM_MODEL": os.getenv("LOCAL_LLM_MEDIUM_MODEL"),
         "LOCAL_LLM_LOW_TIMEOUT_SECONDS": os.getenv("LOCAL_LLM_LOW_TIMEOUT_SECONDS", "30"),
         "LOCAL_LLM_LOW_MAX_TOKENS": os.getenv("LOCAL_LLM_LOW_MAX_TOKENS", "256"),
+        "LOCAL_LLM_LOW_KEEP_ALIVE": os.getenv("LOCAL_LLM_LOW_KEEP_ALIVE", "30m"),
         "LOCAL_LLM_MEDIUM_WARMUP_TIMEOUT_SECONDS": os.getenv(
             "LOCAL_LLM_MEDIUM_WARMUP_TIMEOUT_SECONDS",
             "120",
         ),
         "LOCAL_LLM_MEDIUM_TIMEOUT_SECONDS": os.getenv("LOCAL_LLM_MEDIUM_TIMEOUT_SECONDS", "180"),
         "LOCAL_LLM_MEDIUM_MAX_TOKENS": os.getenv("LOCAL_LLM_MEDIUM_MAX_TOKENS", "600"),
+        "LOCAL_LLM_MEDIUM_KEEP_ALIVE": os.getenv("LOCAL_LLM_MEDIUM_KEEP_ALIVE", "60m"),
         "LOCAL_LLM_UNLOAD_MEDIUM_AFTER_REVIEW": os.getenv(
             "LOCAL_LLM_UNLOAD_MEDIUM_AFTER_REVIEW",
             "false",
