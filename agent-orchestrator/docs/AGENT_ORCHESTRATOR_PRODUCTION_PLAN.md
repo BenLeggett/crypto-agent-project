@@ -258,7 +258,7 @@ if pending task exists:
   ↓
   assemble_prompt() → last_prompt.md
   post to Discord: "Running task N: {title}"
-  [Mode A: post prompt to Discord, set paused=1, exit — human applies manually]
+  [Mode A: post prompt to Discord, set paused=1, keep loop alive — human applies manually]
   [Mode B: invoke Codex CLI, capture output]
   ↓
   run validator.validate()
@@ -280,7 +280,56 @@ if pending task exists:
 ```dotenv
 LOOP_INTERVAL_SECONDS=30     # pause between tasks in run-loop mode
 CODEX_MODE=manual            # manual | auto — controls Mode A vs B behaviour in loop
+LOCAL_VALIDATION_SUMMARY=failures_only  # failures_only | always | off; advisory local diagnostics
+LOCAL_LLM_LOW_TIMEOUT_SECONDS=30        # routine low local model timeout
+LOCAL_LLM_LOW_MAX_TOKENS=256            # routine low local model output cap
+LOCAL_LLM_MEDIUM_WARMUP_TIMEOUT_SECONDS=120 # medium model cold-start warmup timeout
+LOCAL_LLM_MEDIUM_TIMEOUT_SECONDS=180    # validation failure review timeout
+LOCAL_LLM_MEDIUM_MAX_TOKENS=600         # validation failure review output cap
+LOCAL_LLM_UNLOAD_MEDIUM_AFTER_REVIEW=false # optional best-effort Ollama unload
+LOCAL_LLM_RETRY_ATTEMPTS=2              # retry local model startup/connection hiccups
+LOCAL_LLM_RETRY_BACKOFF_SECONDS=1       # local model retry delay baseline
+DISCORD_WEBHOOK_RETRY_ATTEMPTS=3        # retry transient Discord webhook 429/5xx responses
+DISCORD_WEBHOOK_RETRY_BACKOFF_SECONDS=1 # Discord webhook retry delay baseline
 ```
+
+### Local diagnostics and operator explanation
+
+Validation remains deterministic and model-free. When validation fails, the
+run-loop posts the validator failure first, then warms the medium local model
+with a tiny request before the advisory failure review. The context is compact:
+task id/title, failed validation command, validator error/warning summary,
+relevant task file paths, and recent `ACTIVITY.MD` entries. It does not include
+`.env`, secrets, live config paths, full file contents, or full git patches. If
+the medium model is unavailable or times out during warmup/review, the task still
+remains `failed`, `paused=1` is still set, and the operator receives a
+medium-review-unavailable notice with the underlying connection/timeout/status
+detail when available.
+
+The Discord listener also supports read-only `!explain`. It must not mutate task
+rows, settings, approvals, prompt files, phase state, or approval state. It uses
+`prompts/latest_action_explain.md` with `LOCAL_LOW` over compact SQLite
+status, paused state, recent activity, and a prompt excerpt. It intentionally
+does not include git diff summaries so operator context stays compact. If the
+local model fails, it returns a deterministic explanation from SQLite status and
+recent activity plus the local model failure reason.
+
+In Discord mode, the listener renders one evolving task run card from durable
+`operator_events` in `state.sqlite`. The card shows the active task, compact
+timeline, current state, latest finding, and next action; buttons attach only
+when the card is idle. In Discord mode the card is an embed with separate fields,
+collapsed repeated timeline steps, capped text lengths, and operator-friendly
+wording for deterministic failures such as forbidden `.env` edits. Button
+callbacks always send a followup after deferring so Discord's native thinking
+indicator clears after the card update. Routine run-loop transitions such as
+prompt-ready, resume, validating, validation failed, medium-review running,
+medium-review done, paused, and task-done are SQLite events rather than public
+webhook spam. During validation or medium review, buttons are removed and
+Discord's typing indicator shows that the system is working. `!explain` is
+blocked while review is in flight so the low model does not compete with the
+medium diagnostic call. When the listener restarts, it recovers or recreates the
+task card from SQLite. Webhook parsing remains only as compatibility fallback
+for older notifications or emergency messages.
 
 ### Codex prompt
 
@@ -325,7 +374,7 @@ Add --run-loop flag to orchestrator.py implementing this behaviour:
         - Post last_prompt.md content (or link) to Discord
         - Post: "Manual mode: apply the prompt in last_prompt.md, then send !resume"
         - Set paused=1 in settings table
-        - Break loop (human resumes after applying)
+        - Continue sleeping in the live loop until the human resumes after applying
       If "auto":
         - Post: "Running Codex on task {id}: {title}"
         - subprocess.run(["codex", "run", "--prompt-file", "agent-orchestrator/last_prompt.md"])

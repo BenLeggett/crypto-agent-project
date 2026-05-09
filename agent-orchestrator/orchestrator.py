@@ -14,11 +14,13 @@ import activity_logger
 import context_builder
 import decision_gate
 import discord_notifier
+import operator_events
 import prompt_runner
 import validator
 from validator import FORBIDDEN_PATHS
 from model_router import ModelTier
 from task_queue_reader import read_task
+from validation_failure_review import review_validation_failure_with_medium_model
 
 try:
     from dotenv import load_dotenv
@@ -99,6 +101,7 @@ def init_state_db(db_path: Path) -> None:
             )
             """
         )
+        operator_events.init_operator_tables(connection)
         connection.commit()
     finally:
         connection.close()
@@ -284,16 +287,32 @@ def _normalize_repo_path(path: str) -> str:
     return path.replace("\\", "/").strip("` ")
 
 
+def _matches_forbidden_path(path: str, forbidden_path: str) -> bool:
+    """Return True when a task-declared file overlaps a forbidden path."""
+    forbidden = _normalize_repo_path(forbidden_path)
+    if forbidden.endswith("/"):
+        return path == forbidden.rstrip("/") or path.startswith(forbidden)
+    if forbidden == ".env":
+        return path == ".env" or path.endswith("/.env")
+    return path == forbidden
+
+
+def _matches_risky_prefix(path: str, prefix: str) -> bool:
+    """Return True when a task-declared file is inside a risky project area."""
+    normalized_prefix = _normalize_repo_path(prefix).rstrip("/")
+    return path == normalized_prefix or path.startswith(f"{normalized_prefix}/")
+
+
 def risky_reasons(task: dict) -> list[str]:
     """Return reasons a task requires a human approval gate."""
     reasons: list[str] = []
     for raw_path in task.get("files", []):
         path = _normalize_repo_path(str(raw_path))
         for forbidden_path in FORBIDDEN_PATHS:
-            if path == forbidden_path or path.startswith(forbidden_path):
+            if _matches_forbidden_path(path, forbidden_path):
                 reasons.append(f"forbidden path: {path}")
         for prefix in RISKY_PATH_PREFIXES:
-            if path == prefix.rstrip("/") or path.startswith(prefix):
+            if _matches_risky_prefix(path, prefix):
                 reasons.append(f"risky path: {path}")
     return reasons
 
@@ -326,6 +345,36 @@ def _log_run_next_activity(
 def _phase_display_name(phase: dict[str, object]) -> str:
     """Format one phase label consistently for logs and Discord."""
     return f"Phase {phase['number']} - {phase['name']}"
+
+
+def _phase_from_setting(phases: list[dict[str, object]], setting: str) -> dict[str, object] | None:
+    """Resolve a persisted current_phase setting back to a parsed phase object."""
+    normalized = setting.strip().lower()
+    if not normalized:
+        return None
+    number_match = re.search(r"\d+", normalized)
+    for phase in phases:
+        if number_match and str(phase["number"]) == number_match.group(0):
+            return phase
+        if _phase_display_name(phase).lower() == normalized:
+            return phase
+    return None
+
+
+def _select_loop_phase(
+    db_path: Path,
+    phases: list[dict[str, object]],
+    status_map: dict[int, str],
+) -> dict[str, object]:
+    """Select and persist the phase boundary the run loop must honor."""
+    current_phase_setting = _get_setting(db_path, "current_phase", "")
+    selected_phase = _phase_from_setting(phases, current_phase_setting)
+    if selected_phase is not None:
+        return selected_phase
+
+    selected_phase = find_current_phase(phases, status_map)
+    _set_setting(db_path, "current_phase", _phase_display_name(selected_phase))
+    return selected_phase
 
 
 def _connect_db(db_path: Path) -> sqlite3.Connection:
@@ -376,21 +425,69 @@ def _is_paused(db_path: Path) -> bool:
     return _get_setting(db_path, "paused", "0") == "1"
 
 
-def _mark_task_status(db_path: Path, task_id: int, status: str, notes: str = "") -> None:
+def _task_status(db_path: Path, task_id: int) -> str:
+    """Read one task status from sqlite, defaulting to pending for unseeded tasks."""
+    connection = _connect_db(db_path)
+    try:
+        row = connection.execute(
+            "SELECT status FROM tasks WHERE task_id = ?",
+            (task_id,),
+        ).fetchone()
+    finally:
+        connection.close()
+    if row is None or row[0] is None:
+        return "pending"
+    return str(row[0])
+
+
+def _mark_task_status(
+    db_path: Path,
+    task_id: int,
+    status: str,
+    notes: str = "",
+    phase: str = "",
+    title: str = "",
+) -> None:
     """Update the persisted task status for loop control."""
     connection = _connect_db(db_path)
     try:
         connection.execute(
             """
-            UPDATE tasks
-            SET status = ?, notes = ?
-            WHERE task_id = ?
+            INSERT INTO tasks (task_id, phase, title, status, notes)
+            VALUES (?, ?, ?, ?, ?)
+            ON CONFLICT(task_id) DO UPDATE SET
+                phase = COALESCE(NULLIF(excluded.phase, ''), tasks.phase),
+                title = COALESCE(NULLIF(excluded.title, ''), tasks.title),
+                status = excluded.status,
+                notes = excluded.notes
             """,
-            (status, notes, task_id),
+            (task_id, phase, title, status, notes),
         )
         connection.commit()
     finally:
         connection.close()
+
+
+def _record_operator_event(
+    db_path: Path,
+    event_type: str,
+    task: dict | None = None,
+    phase: str | None = None,
+    status: str | None = None,
+    summary: str | None = None,
+    details: dict[str, object] | None = None,
+) -> None:
+    """Append a compact event for the Discord task run card."""
+    operator_events.record_event(
+        db_path,
+        event_type,
+        task_id=int(task["id"]) if task is not None and task.get("id") is not None else None,
+        phase=phase,
+        title=str(task["title"]) if task is not None and task.get("title") is not None else None,
+        status=status,
+        summary=_truncate_for_discord(summary or "", limit=900),
+        details=details,
+    )
 
 
 def _create_pending_approval(db_path: Path, gate_type: str, ref: str, notes: str = "") -> None:
@@ -507,6 +604,108 @@ def _codex_mode() -> str:
     return mode
 
 
+def _local_validation_summary_mode() -> str:
+    """Read the advisory local validation summary mode."""
+    mode = os.getenv("LOCAL_VALIDATION_SUMMARY", "failures_only").strip().lower()
+    if mode not in {"failures_only", "always", "off"}:
+        return "failures_only"
+    return mode
+
+
+def _validation_diagnosis_context(
+    project_root: Path,
+    task: dict,
+    validation_result: dict[str, object],
+    errors: list[str],
+    warnings: list[str],
+) -> str:
+    """Build compact context for advisory local validation diagnostics."""
+    likely_files = ", ".join(str(item) for item in task.get("files", [])) or "none listed"
+    failed_commands = [item.split(" failed:", 1)[0] for item in errors if " failed:" in item]
+    validation_command = ", ".join(failed_commands) if failed_commands else "validator.validate(project_root)"
+    return "\n\n".join(
+        [
+            "## Active Task",
+            f"Task {task['id']}: {task['title']}",
+            "## Validation Command",
+            validation_command,
+            "## Validator Errors",
+            _truncate_for_discord("\n".join(f"- {error}" for error in errors), limit=1600)
+            if errors
+            else "- None",
+            "## Validator Warnings",
+            "\n".join(f"- {warning}" for warning in warnings) if warnings else "- None",
+            "## Relevant File Paths",
+            likely_files,
+            "## Recent ACTIVITY Tail",
+            _truncate_for_discord(
+                read_recent_activity(project_root / "ACTIVITY.MD", max_entries=2),
+                limit=1200,
+            ),
+        ]
+    )
+
+
+def _post_validation_failure_diagnosis(
+    db_path: Path,
+    project_root: Path,
+    active_task: dict,
+    validation_result: dict[str, object],
+    errors: list[str],
+    warnings: list[str],
+) -> dict[str, object] | None:
+    """Run advisory local-LLM guidance after a deterministic validation failure."""
+    if _local_validation_summary_mode() == "off":
+        return None
+
+    context = _validation_diagnosis_context(
+        project_root,
+        active_task,
+        validation_result,
+        errors,
+        warnings,
+    )
+    config = _model_config_from_env()
+    model = config.get("LOCAL_LLM_MEDIUM_MODEL") or "medium local model"
+    _record_operator_event(
+        db_path,
+        "medium_review_running",
+        task=active_task,
+        phase=str(active_task.get("phase", "")),
+        status="reviewing",
+        summary=f"Running medium local review with {model}.",
+        details={"model": model},
+    )
+    try:
+        review = review_validation_failure_with_medium_model(
+            context,
+            config,
+        )
+    except Exception as exc:
+        return {
+            "review_available": False,
+            "model_used": "none",
+            "summary": f"Medium local review unavailable: {type(exc).__name__}: {exc}",
+            "fallback_recommended": True,
+        }
+
+    summary = str(review.get("summary", "")).strip()
+    review_available = bool(review.get("review_available"))
+    _record_operator_event(
+        db_path,
+        "medium_review_done",
+        task=active_task,
+        phase=str(active_task.get("phase", "")),
+        status="diagnosis_ready" if review_available else "diagnosis_unavailable",
+        summary=summary if review_available else f"Diagnosis unavailable: {summary}",
+        details={
+            "review_available": review_available,
+            "model_used": str(review.get("model_used", "none")),
+        },
+    )
+    return review
+
+
 def _manual_prompt_message(task: dict, prompt_path: Path) -> str:
     """Render the Discord message for manual prompt application."""
     prompt_text = prompt_path.read_text(encoding="utf-8")
@@ -537,7 +736,132 @@ def _validation_failure_message(task: dict, errors: list[str]) -> str:
     )
 
 
-def run_loop(orchestrator_root: Path) -> int:
+def _run_validation_for_task(
+    project_root: Path,
+    db_path: Path,
+    current_phase: dict[str, object],
+    active_task: dict,
+    codex_mode: str,
+    codex_return_code: int = 0,
+) -> bool:
+    """Validate the workspace and persist the task result."""
+    phase_name = _phase_display_name(current_phase)
+    _record_operator_event(
+        db_path,
+        "validating",
+        task=active_task,
+        phase=phase_name,
+        status="validating",
+        summary=f"Running deterministic validation for Task {active_task['id']}.",
+    )
+    validation_result = validator.validate(str(project_root))
+    errors = [str(item) for item in validation_result.get("errors", [])]
+    warnings = [str(item) for item in validation_result.get("warnings", [])]
+    if codex_return_code != 0:
+        errors.append(f"codex run exited with return code {codex_return_code}.")
+        validation_result["passed"] = False
+        validation_result["errors"] = errors
+
+    if not bool(validation_result["passed"]):
+        failure_notes = "; ".join(errors + warnings)
+        _mark_task_status(
+            db_path,
+            int(active_task["id"]),
+            "failed",
+            failure_notes or "Validation failed.",
+            phase_name,
+            str(active_task["title"]),
+        )
+        _record_operator_event(
+            db_path,
+            "validation_failed",
+            task=active_task,
+            phase=phase_name,
+            status="failed",
+            summary=failure_notes or "Validation failed.",
+            details={"errors": errors, "warnings": warnings},
+        )
+        medium_review = _post_validation_failure_diagnosis(
+            db_path,
+            project_root,
+            active_task,
+            validation_result,
+            errors,
+            warnings,
+        )
+        if medium_review is None:
+            review_notes = "Medium local review skipped by LOCAL_VALIDATION_SUMMARY=off."
+        elif medium_review.get("review_available"):
+            review_notes = (
+                f"Medium local review succeeded with {medium_review.get('model_used')}: "
+                f"{_truncate_for_discord(str(medium_review.get('summary', '')), limit=500)}"
+            )
+        else:
+            review_notes = (
+                "Medium local review unavailable; validation failure logged without medium diagnosis. "
+                + _truncate_for_discord(str(medium_review.get("summary", "")), limit=500)
+            )
+        _log_loop_activity(
+            project_root,
+            phase_name,
+            active_task["id"],
+            "Validation failed",
+            "failed",
+            "; ".join(
+                item
+                for item in [
+                    failure_notes or "Validation failed with no error summary.",
+                    review_notes,
+                ]
+                if item
+            ),
+            validation="Failed",
+        )
+        _set_paused(db_path, True)
+        _record_operator_event(
+            db_path,
+            "paused",
+            task=active_task,
+            phase=phase_name,
+            status="paused",
+            summary="Loop paused after failed validation. Repair manually, then resume to re-test.",
+        )
+        return False
+
+    _mark_task_status(
+        db_path,
+        int(active_task["id"]),
+        "done",
+        f"Completed in run loop with CODEX_MODE={codex_mode}.",
+        phase_name,
+        str(active_task["title"]),
+    )
+    _log_loop_activity(
+        project_root,
+        phase_name,
+        active_task["id"],
+        "Task completed",
+        "passed",
+        f"Validation passed after CODEX_MODE={codex_mode}; codex return code={codex_return_code}.",
+        validation="Passed",
+    )
+    _record_operator_event(
+        db_path,
+        "task_done",
+        task=active_task,
+        phase=phase_name,
+        status="done",
+        summary=f"Task {active_task['id']} passed deterministic validation.",
+    )
+    return True
+
+
+def _max_iterations_reached(iterations: int, max_iterations: int | None) -> bool:
+    """Bound run_loop in tests without changing production behavior."""
+    return max_iterations is not None and iterations >= max_iterations
+
+
+def run_loop(orchestrator_root: Path, max_iterations: int | None = None) -> int:
     """Run the Stage 12b autonomous task loop."""
     project_root = (orchestrator_root / os.getenv("PROJECT_ROOT", "..")).resolve()
     phase_map_path = project_root / "docs" / "PHASE_TASK_MAP.md"
@@ -554,23 +878,47 @@ def run_loop(orchestrator_root: Path) -> int:
         "Loop startup complete.",
         "Run loop initialized and awaiting work.",
     )
-    discord_notifier.notify("[ORCHESTRATOR] Starting run loop")
+    _record_operator_event(
+        db_path,
+        "run_started",
+        summary="Run loop started and is watching for work.",
+        status="running",
+    )
 
+    iterations = 0
     while True:
+        if _max_iterations_reached(iterations, max_iterations):
+            return 0
+
         if _is_paused(db_path):
             time.sleep(_loop_interval_seconds())
             continue
+        iterations += 1
 
         phases = parse_phase_task_map(phase_map_path)
         status_map = get_task_status_map(db_path)
-        current_phase = find_current_phase(phases, status_map)
+        current_phase_setting = _get_setting(db_path, "current_phase", "")
+        if current_phase_setting.strip().lower() == "complete":
+            message = "All mapped phases are complete. Run loop stopping."
+            _record_operator_event(db_path, "task_done", status="complete", summary=message)
+            _log_loop_activity(
+                project_root,
+                "Run loop",
+                "loop",
+                "Run loop complete",
+                "All mapped phases complete.",
+                "current_phase=complete was found in state.sqlite.",
+            )
+            return 0
+
+        current_phase = _select_loop_phase(db_path, phases, status_map)
         active_task = find_active_task(current_phase, status_map, queue_path)
 
         if active_task is None:
             task_ids = current_phase.get("tasks", [])
             if not isinstance(task_ids, list) or not task_ids:
-                message = "[ORCHESTRATOR] No mapped tasks remain. Run loop stopping."
-                discord_notifier.notify(message)
+                message = "No mapped tasks remain. Run loop stopping."
+                _record_operator_event(db_path, "task_done", status="complete", summary=message)
                 _log_loop_activity(
                     project_root,
                     "Run loop",
@@ -589,13 +937,17 @@ def run_loop(orchestrator_root: Path) -> int:
                 phase_ref,
                 f"Awaiting human review for {_phase_display_name(current_phase)}.",
             )
-            discord_notifier.notify(
-                discord_notifier.format_approval_request(
-                    "Phase transition",
-                    phase_ref,
-                    _truncate_for_discord(phase_review_result, limit=1200),
-                    timeout_minutes=_approval_timeout_minutes(),
-                )
+            _record_operator_event(
+                db_path,
+                "approval_required",
+                phase=_phase_display_name(current_phase),
+                status="approval_required",
+                summary=f"Phase transition approval required: {phase_ref}.",
+                details={
+                    "ref": phase_ref,
+                    "verdict": _truncate_for_discord(phase_review_result, limit=1200),
+                    "timeout_minutes": _approval_timeout_minutes(),
+                },
             )
 
             approved = decision_gate.wait_for_approval(
@@ -630,11 +982,14 @@ def run_loop(orchestrator_root: Path) -> int:
                 )
                 continue
 
-            discord_notifier.notify(
-                f"[ORCHESTRATOR] Phase review for {_phase_display_name(current_phase)} was rejected or timed out. "
-                "Run loop paused."
-            )
             _set_paused(db_path, True)
+            _record_operator_event(
+                db_path,
+                "paused",
+                phase=_phase_display_name(current_phase),
+                status="paused",
+                summary=f"Phase review for {_phase_display_name(current_phase)} was rejected or timed out. Run loop paused.",
+            )
             _log_loop_activity(
                 project_root,
                 _phase_display_name(current_phase),
@@ -647,139 +1002,155 @@ def run_loop(orchestrator_root: Path) -> int:
             )
             return 0
 
-        reasons = risky_reasons(active_task)
-        if reasons:
-            risk_ref = f"task-{active_task['id']}-risky"
-            verdict = "Human review required: " + "; ".join(reasons)
-            _create_pending_approval(db_path, "Risky task", risk_ref, verdict)
-            discord_notifier.notify(
-                discord_notifier.format_approval_request(
-                    "Risky task",
-                    risk_ref,
-                    verdict,
-                    timeout_minutes=_approval_timeout_minutes(),
-                )
-            )
+        codex_mode = _codex_mode()
+        active_task_status = _task_status(db_path, int(active_task["id"]))
+        is_manual_resume = codex_mode == "manual" and active_task_status in {"in_progress", "failed"}
+        codex_return_code = 0
 
-            approved = decision_gate.wait_for_approval(
-                risk_ref,
-                str(db_path),
-                _approval_timeout_seconds(),
+        if is_manual_resume:
+            _record_operator_event(
+                db_path,
+                "resume_received",
+                task=active_task,
+                phase=_phase_display_name(current_phase),
+                status="resuming",
+                summary=f"Resume selected for Task {active_task['id']}; validation will run next.",
             )
-            decision_gate.record_decision(
-                risk_ref,
-                "Risky task",
-                "approved" if approved else "rejected",
-                verdict,
-                str(db_path),
-            )
-
-            if not approved:
-                _mark_task_status(
+        else:
+            reasons = risky_reasons(active_task)
+            if reasons:
+                risk_ref = f"task-{active_task['id']}-risky"
+                verdict = "Human review required: " + "; ".join(reasons)
+                _create_pending_approval(db_path, "Risky task", risk_ref, verdict)
+                _record_operator_event(
                     db_path,
-                    int(active_task["id"]),
-                    "skipped",
-                    f"Skipped after risky gate rejection: {verdict}",
+                    "approval_required",
+                    task=active_task,
+                    phase=_phase_display_name(current_phase),
+                    status="approval_required",
+                    summary=f"Risky task approval required: {risk_ref}.",
+                    details={
+                        "ref": risk_ref,
+                        "verdict": verdict,
+                        "timeout_minutes": _approval_timeout_minutes(),
+                    },
+                )
+
+                approved = decision_gate.wait_for_approval(
+                    risk_ref,
+                    str(db_path),
+                    _approval_timeout_seconds(),
+                )
+                decision_gate.record_decision(
+                    risk_ref,
+                    "Risky task",
+                    "approved" if approved else "rejected",
+                    verdict,
+                    str(db_path),
+                )
+
+                if not approved:
+                    _mark_task_status(
+                        db_path,
+                        int(active_task["id"]),
+                        "skipped",
+                        f"Skipped after risky gate rejection: {verdict}",
+                        _phase_display_name(current_phase),
+                        str(active_task["title"]),
+                    )
+                    _log_loop_activity(
+                        project_root,
+                        _phase_display_name(current_phase),
+                        active_task["id"],
+                        "Risky task skipped",
+                        "Task skipped after risky gate rejection.",
+                        verdict,
+                    )
+                    _record_operator_event(
+                        db_path,
+                        "paused",
+                        task=active_task,
+                        phase=_phase_display_name(current_phase),
+                        status="skipped",
+                        summary=f"Task {active_task['id']} skipped after risky gate rejection.",
+                    )
+                    continue
+
+            ensure_assemble_prompt()
+            task_context = format_task_context(active_task)
+            prompt_runner.assemble_prompt(
+                str(prompt_template_path),
+                task_context,
+                str(prompt_output_path),
+            )
+            _mark_task_status(
+                db_path,
+                int(active_task["id"]),
+                "in_progress",
+                "Prompt assembled for run-loop execution.",
+                _phase_display_name(current_phase),
+                str(active_task["title"]),
+            )
+
+            if codex_mode == "manual":
+                _record_operator_event(
+                    db_path,
+                    "prompt_ready",
+                    task=active_task,
+                    phase=_phase_display_name(current_phase),
+                    status="awaiting_manual",
+                    summary="Prompt ready in last_prompt.md. Apply it, then resume to validate.",
+                    details={"prompt_path": str(prompt_output_path)},
+                )
+                _set_paused(db_path, True)
+                _record_operator_event(
+                    db_path,
+                    "paused",
+                    task=active_task,
+                    phase=_phase_display_name(current_phase),
+                    status="paused",
+                    summary="Manual mode is paused until the operator resumes.",
                 )
                 _log_loop_activity(
                     project_root,
                     _phase_display_name(current_phase),
                     active_task["id"],
-                    "Risky task skipped",
-                    "Task skipped after risky gate rejection.",
-                    verdict,
+                    "Prompt assembled",
+                    "Awaiting manual application.",
+                    "Loop paused in manual mode after writing last_prompt.md.",
+                    validation="Pending",
                 )
                 continue
 
-        ensure_assemble_prompt()
-        task_context = format_task_context(active_task)
-        prompt_runner.assemble_prompt(
-            str(prompt_template_path),
-            task_context,
-            str(prompt_output_path),
-        )
-        _mark_task_status(
-            db_path,
-            int(active_task["id"]),
-            "in_progress",
-            "Prompt assembled for run-loop execution.",
-        )
-
-        codex_mode = _codex_mode()
-        codex_return_code = 0
-
-        if codex_mode == "manual":
-            discord_notifier.notify(_manual_prompt_message(active_task, prompt_output_path))
-            discord_notifier.notify(
-                "Manual mode: apply the prompt in last_prompt.md, then send !resume"
-            )
-            _set_paused(db_path, True)
-            _log_loop_activity(
-                project_root,
-                _phase_display_name(current_phase),
-                active_task["id"],
-                "Prompt assembled",
-                "Awaiting manual application.",
-                "Loop paused in manual mode after writing last_prompt.md.",
-                validation="Pending",
-            )
-            return 0
-
-        discord_notifier.notify(_codex_auto_message(active_task))
-        codex_result = subprocess.run(
-            ["codex", "run", "--prompt-file", "agent-orchestrator/last_prompt.md"],
-            cwd=project_root,
-            capture_output=True,
-            text=True,
-            check=False,
-        )
-        codex_return_code = codex_result.returncode
-
-        validation_result = validator.validate(str(project_root))
-        errors = [str(item) for item in validation_result.get("errors", [])]
-        warnings = [str(item) for item in validation_result.get("warnings", [])]
-        if codex_return_code != 0:
-            errors.append(f"codex run exited with return code {codex_return_code}.")
-            validation_result["passed"] = False
-            validation_result["errors"] = errors
-
-        if not bool(validation_result["passed"]):
-            failure_notes = "; ".join(errors + warnings)
-            _mark_task_status(
+            _record_operator_event(
                 db_path,
-                int(active_task["id"]),
-                "failed",
-                failure_notes or "Validation failed.",
+                "validating",
+                task=active_task,
+                phase=_phase_display_name(current_phase),
+                status="codex_running",
+                summary=f"Running Codex automatically for Task {active_task['id']}.",
             )
-            discord_notifier.notify(_validation_failure_message(active_task, errors))
-            _log_loop_activity(
-                project_root,
-                _phase_display_name(current_phase),
-                active_task["id"],
-                "Validation failed",
-                "failed",
-                failure_notes or "Validation failed with no error summary.",
-                validation="Failed",
+            codex_result = subprocess.run(
+                ["codex", "run", "--prompt-file", "agent-orchestrator/last_prompt.md"],
+                cwd=project_root,
+                capture_output=True,
+                text=True,
+                check=False,
             )
-            _set_paused(db_path, True)
-            return 0
+            codex_return_code = codex_result.returncode
 
-        _mark_task_status(
-            db_path,
-            int(active_task["id"]),
-            "done",
-            f"Completed in run loop with CODEX_MODE={codex_mode}.",
-        )
-        _log_loop_activity(
+        validation_passed = _run_validation_for_task(
             project_root,
-            _phase_display_name(current_phase),
-            active_task["id"],
-            "Task completed",
-            "passed",
-            f"Validation passed after CODEX_MODE={codex_mode}; codex return code={codex_return_code}.",
-            validation="Passed",
+            db_path,
+            current_phase,
+            active_task,
+            codex_mode,
+            codex_return_code,
         )
-        discord_notifier.notify(f"Task {active_task['id']} complete \u2705")
+        if not validation_passed:
+            continue
+        if _max_iterations_reached(iterations, max_iterations):
+            return 0
         time.sleep(_loop_interval_seconds())
 
 
@@ -869,6 +1240,18 @@ def _model_config_from_env() -> dict[str, str | None]:
         "LOCAL_LLM_BASE_URL": os.getenv("LOCAL_LLM_BASE_URL", "http://localhost:1234/v1"),
         "LOCAL_LLM_LOW_MODEL": os.getenv("LOCAL_LLM_LOW_MODEL"),
         "LOCAL_LLM_MEDIUM_MODEL": os.getenv("LOCAL_LLM_MEDIUM_MODEL"),
+        "LOCAL_LLM_LOW_TIMEOUT_SECONDS": os.getenv("LOCAL_LLM_LOW_TIMEOUT_SECONDS", "30"),
+        "LOCAL_LLM_LOW_MAX_TOKENS": os.getenv("LOCAL_LLM_LOW_MAX_TOKENS", "256"),
+        "LOCAL_LLM_MEDIUM_WARMUP_TIMEOUT_SECONDS": os.getenv(
+            "LOCAL_LLM_MEDIUM_WARMUP_TIMEOUT_SECONDS",
+            "120",
+        ),
+        "LOCAL_LLM_MEDIUM_TIMEOUT_SECONDS": os.getenv("LOCAL_LLM_MEDIUM_TIMEOUT_SECONDS", "180"),
+        "LOCAL_LLM_MEDIUM_MAX_TOKENS": os.getenv("LOCAL_LLM_MEDIUM_MAX_TOKENS", "600"),
+        "LOCAL_LLM_UNLOAD_MEDIUM_AFTER_REVIEW": os.getenv(
+            "LOCAL_LLM_UNLOAD_MEDIUM_AFTER_REVIEW",
+            "false",
+        ),
         "OPENAI_API_KEY": os.getenv("OPENAI_API_KEY"),
         "CLOUD_HIGH_MODEL": os.getenv("CLOUD_HIGH_MODEL"),
         "CLOUD_EXTRA_HIGH_MODEL": os.getenv("CLOUD_EXTRA_HIGH_MODEL"),

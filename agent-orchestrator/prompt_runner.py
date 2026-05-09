@@ -7,6 +7,30 @@ import local_llm_client
 from model_router import ModelTier
 
 
+def _required_config(config: dict, key: str) -> str:
+    """Return a required model config value with a useful failure reason."""
+    value = config.get(key)
+    if value is None or str(value).strip() == "":
+        raise local_llm_client.LocalLLMUnavailable(f"{key} is not set.")
+    return str(value)
+
+
+def _float_config(config: dict, key: str, default: float) -> float:
+    """Return an optional float config value."""
+    value = config.get(key)
+    if value is None or str(value).strip() == "":
+        return default
+    return float(value)
+
+
+def _int_config(config: dict, key: str, default: int) -> int:
+    """Return an optional integer config value."""
+    value = config.get(key)
+    if value is None or str(value).strip() == "":
+        return default
+    return int(value)
+
+
 def assemble_prompt(template_path: str, task_context: str) -> str:
     """Return a placeholder rendered prompt."""
     _ = (template_path, task_context)
@@ -22,14 +46,18 @@ def run_model_prompt(template_path: str, context: str, model_tier: object, confi
     if tier == ModelTier.LOCAL_LOW:
         return local_llm_client.complete(
             rendered_prompt,
-            config["LOCAL_LLM_LOW_MODEL"],
-            config["LOCAL_LLM_BASE_URL"],
+            _required_config(config, "LOCAL_LLM_LOW_MODEL"),
+            _required_config(config, "LOCAL_LLM_BASE_URL"),
+            max_tokens=_int_config(config, "LOCAL_LLM_LOW_MAX_TOKENS", 256),
+            timeout=_float_config(config, "LOCAL_LLM_LOW_TIMEOUT_SECONDS", 30),
         )
     if tier == ModelTier.LOCAL_MEDIUM:
         return local_llm_client.complete(
             rendered_prompt,
-            config["LOCAL_LLM_MEDIUM_MODEL"],
-            config["LOCAL_LLM_BASE_URL"],
+            _required_config(config, "LOCAL_LLM_MEDIUM_MODEL"),
+            _required_config(config, "LOCAL_LLM_BASE_URL"),
+            max_tokens=_int_config(config, "LOCAL_LLM_MEDIUM_MAX_TOKENS", 600),
+            timeout=_float_config(config, "LOCAL_LLM_MEDIUM_TIMEOUT_SECONDS", 180),
         )
     if tier == ModelTier.CLOUD_HIGH:
         return cloud_llm_client.complete(

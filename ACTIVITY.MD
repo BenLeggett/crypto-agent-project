@@ -1,4 +1,4 @@
-# Activity Log
+﻿# Activity Log
 
 ## 2026-04-22
 - Regenerated the merged Codex implementation packet from the two uploaded source documents after prior exported files were no longer available in the workspace.
@@ -171,23 +171,23 @@
 - Added a draft promotion checklist that records paper evidence requirements while explicitly stating it is not live approval.
 - Added daily report tests and README usage notes while keeping all validation mock/local with no secrets or live wallet execution.
 
-## [2026-05-01 00:34:42] Run 3442 · Phase 1 · Task 1
+## [2026-05-01 00:34:42] Run 3442 Â· Phase 1 Â· Task 1
 
-**Action:** Codex prompt generated  
-**Model:** none  
-**Outcome:** Prompt written to agent-orchestrator/last_prompt.md  
-**Validation:** Not provided  
+**Action:** Codex prompt generated
+**Model:** none
+**Outcome:** Prompt written to agent-orchestrator/last_prompt.md
+**Validation:** Not provided
 **Notes:** No approval gate required.
 
 ---
 
-## [2026-05-03 00:05:12] Run 0512 · Phase 10 · Task 38
+## [2026-05-03 00:05:12] Run 0512 Â· Phase 10 Â· Task 38
 
-**Source:** Agent Orchestrator  
-**Action:** Codex prompt generated  
-**Model:** none  
-**Outcome:** Prompt written to agent-orchestrator/last_prompt.md  
-**Validation:** Not provided  
+**Source:** Agent Orchestrator
+**Action:** Codex prompt generated
+**Model:** none
+**Outcome:** Prompt written to agent-orchestrator/last_prompt.md
+**Validation:** Not provided
 **Notes:** No approval gate required.
 
 ---
@@ -202,3 +202,51 @@
 - Cleaned up the compose validation network with `docker compose down` and confirmed no compose containers remained running.
 - Assessed manual wiring as not required for Phase 9 completion; exchange keys, wallet credentials, AI provider keys, webhook/bot credentials, and live config wiring remain unwired and should not be enabled yet.
 - Recorded recommendation: Phase 9 complete, proceed. The phase is validated as a mock/local paper-mode dry-run boundary; longer public-market Freqtrade dry-run operation remains optional operational smoke, not a Phase 9 blocker.
+
+## 2026-05-08
+- Implemented the Stage 12b Junction B manual-mode run-loop fix for the agent orchestrator.
+- Updated `--run-loop` so manual mode keeps the process alive while paused, wakes after `!resume`, validates the existing `in_progress` task, and continues instead of requiring a restart.
+- Added regression coverage for pending-to-paused prompt generation, resumed validation success, and resumed validation failure recovery.
+
+## 2026-05-09
+- Updated the agent orchestrator validator to treat Cygwin Make's `No rule to make target` wording as a missing optional target warning.
+- Added validator regression coverage so absent `lint` and `typecheck` targets do not block Junction B validation.
+- Hardened validator secret scanning so bare domain words like `token/cost estimate` and prior failure notes do not block validation.
+- Added redacted, file-specific secret-assignment findings for high-confidence secret-like additions.
+- Fixed the Stage 12b run loop phase-boundary handling so the current phase is persisted before task execution and phase exit review blocks later-phase tasks.
+
+## 2026-05-09
+- Added local-LLM advisory diagnostics around orchestrator validation failures without changing deterministic validator semantics.
+- Added read-only `!explain` operator command with local-medium summary and deterministic SQLite/git fallback.
+- Added prompt templates for validation failure diagnosis and latest-action explanations with explicit deterministic gate and no-live-trading constraints.
+
+## 2026-05-09
+- Hardened Discord `!explain` delivery so slow local LLM calls run off the Discord event loop and show a visible thinking message.
+- Added dynamic Discord action buttons for status, explain, pause/resume, and pending approval decisions.
+- Capped Discord responses and improved status output so failed tasks show failed validation plus the correct `!resume` recovery action.
+
+## 2026-05-09
+- Added a refreshing bot-owned Discord control panel so action buttons remain available beside webhook-only prompt messages.
+- Made Discord progress text action-specific for explain, status, pause, resume, approve, and reject decisions.
+- Removed git diff summaries from `!explain` context and deterministic explanation output, and split long Discord responses across multiple messages.
+- Improved local LLM failure diagnostics so Ollama chat endpoint/model-name failures are visible instead of only saying unavailable.
+
+## 2026-05-09
+- Revised Discord controls so buttons exist only on the newest bot-owned message and are removed while a request is in flight.
+- Changed button clicks to use Discord's native bot-is-thinking indicator, then attach action buttons only to the final response message.
+- Kept webhook-only orchestrator updates discoverable by posting a fresh bot controls message after webhook messages.
+
+## 2026-05-09
+- Added retry/backoff for transient Discord webhook `429` and `5xx` delivery failures.
+- Added local LLM retry/backoff and surfaced the underlying connection, timeout, status, or model error in diagnosis-unavailable messages.
+- Annotated cleared Discord button messages with the action selected and what the current in-flight message is waiting on.
+
+## 2026-05-09
+- Added tier-specific local LLM timeout and token controls so routine low-model calls stay bounded while validation failure review can use longer medium-model timeouts.
+- Added medium-model warmup before validation failure review and graceful fallback when warmup or review is unavailable.
+- Kept medium local review scoped to validation failures, with compact context and no full diffs, secrets, live config, or automatic Codex repair.
+- Added Discord in-flight handling for validation-failure medium review so controls are hidden, typed commands are ignored, and empty medium responses fall back instead of posting blank diagnoses.
+- Reworked Discord operator updates around durable SQLite operator events and one evolving task run card so routine run-loop transitions stop spamming the channel.
+- Updated the Discord task run card to use stable embed fields, friendlier failure text, collapsed progress, and followup acknowledgements so deferred button interactions do not leave the thinking indicator hanging.
+
+

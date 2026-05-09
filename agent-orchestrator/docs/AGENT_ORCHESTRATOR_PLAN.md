@@ -601,7 +601,8 @@ Requirements:
    - "activity_log_draft" → LOCAL_LOW
    - "task_parsing" → LOCAL_MEDIUM
    - "codex_prompt_generation" → LOCAL_MEDIUM
-   - "failed_task_diagnosis" → CLOUD_HIGH
+   - "failed_task_diagnosis" → LOCAL_MEDIUM
+   - "latest_action_explain" → LOCAL_LOW
    - "phase_review" → CLOUD_HIGH
    - "architecture_review" → CLOUD_EXTRA_HIGH
    - "risk_review" → CLOUD_EXTRA_HIGH
@@ -819,6 +820,8 @@ prompt_runner.py requirements:
    - Based on model_tier, call local_llm_client.complete() or cloud_llm_client.complete()
    - Return model response string
    - Config dict keys used: LOCAL_LLM_BASE_URL, LOCAL_LLM_LOW_MODEL, LOCAL_LLM_MEDIUM_MODEL,
+     LOCAL_LLM_LOW_TIMEOUT_SECONDS, LOCAL_LLM_LOW_MAX_TOKENS,
+     LOCAL_LLM_MEDIUM_TIMEOUT_SECONDS, LOCAL_LLM_MEDIUM_MAX_TOKENS,
      OPENAI_API_KEY, CLOUD_HIGH_MODEL, CLOUD_EXTRA_HIGH_MODEL
 
 prompts/run_next_task.md:

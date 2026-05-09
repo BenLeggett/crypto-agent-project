@@ -8,6 +8,19 @@ local_llm_api_key: "lm-studio"
 local_llm_low_model: "mistral-7b-instruct"
 # Local model name used for slightly more capable local tasks.
 local_llm_medium_model: "llama-3.1-8b-instruct"
+# Timeout and output controls for routine low-tier local model calls.
+local_llm_low_timeout_seconds: 30
+local_llm_low_max_tokens: 256
+# Warmup and review controls for medium-tier validation failure diagnostics.
+local_llm_medium_warmup_timeout_seconds: 120
+local_llm_medium_timeout_seconds: 180
+local_llm_medium_max_tokens: 600
+local_llm_unload_medium_after_review: false
+# Retry local diagnostic calls when the local model is loading or briefly unavailable.
+local_llm_retry_attempts: 2
+local_llm_retry_backoff_seconds: 1
+# Discord listener poll interval for durable operator_events.
+operator_event_poll_seconds: 1
 
 # OpenAI API key for cloud fallback tasks.
 openai_api_key: "set-in-env-or-config"
@@ -20,6 +33,9 @@ cloud_extra_high_model: "gpt-4o"
 
 # Discord webhook URL for orchestrator status and approval messages.
 discord_webhook_url: "https://discord.com/api/webhooks/replace-me"
+# Retry transient Discord webhook 429/5xx responses.
+discord_webhook_retry_attempts: 3
+discord_webhook_retry_backoff_seconds: 1
 
 # Time to wait for an approval before timing out.
 orchestrator_approval_timeout_seconds: 3600
@@ -30,3 +46,5 @@ project_root: ".."
 
 # Future Codex invocation mode; keep manual by default.
 codex_mode: "manual"
+# Advisory validation diagnostics: failures_only | always | off.
+local_validation_summary: "failures_only"
