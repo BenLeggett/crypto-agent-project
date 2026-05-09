@@ -248,5 +248,6 @@
 - Added Discord in-flight handling for validation-failure medium review so controls are hidden, typed commands are ignored, and empty medium responses fall back instead of posting blank diagnoses.
 - Reworked Discord operator updates around durable SQLite operator events and one evolving task run card so routine run-loop transitions stop spamming the channel.
 - Updated the Discord task run card to use stable embed fields, friendlier failure text, collapsed progress, and followup acknowledgements so deferred button interactions do not leave the thinking indicator hanging.
+- Corrected current project state: Task 38 is pending and its implementation prompt has not been run yet; older prompt-generated entries remain historical only.
 
 
