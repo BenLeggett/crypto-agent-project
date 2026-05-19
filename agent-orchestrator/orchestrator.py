@@ -31,6 +31,39 @@ except ModuleNotFoundError:  # pragma: no cover - fallback for non-venv interpre
 
 PHASE_HEADING_RE = re.compile(r"^##\s+Phase\s+(?P<number>\d+)\s+-\s+(?P<name>.+?)\s*$")
 PRIMARY_TASK_RE = re.compile(r"^-\s+(?P<task_id>\d+)\.\s+.+$")
+REQUIRED_CODEX_PROMPT_FIELDS = (
+    "TASK_ID:",
+    "TASK_TITLE:",
+    "OBJECTIVE:",
+    "FILES_ALLOWED_TO_MODIFY:",
+    "FILES_ALLOWED_TO_INSPECT:",
+    "OUT_OF_SCOPE:",
+    "ACCEPTANCE_CRITERIA:",
+    "VALIDATION_COMMANDS:",
+    "STOP_CONDITIONS:",
+)
+VAGUE_CODEX_PROMPT_PHRASES = (
+    "fix the issue",
+    "do the right thing",
+    "make it better",
+    "clean this up",
+    "improve the project",
+    "handle it",
+    "whatever is needed",
+)
+CODEX_CLARIFICATION_MARKER = "CODEX_NEEDS_CLARIFICATION:"
+CODEX_CLARIFICATION_PHRASES = (
+    "please clarify",
+    "could you clarify",
+    "which file",
+    "which directory",
+    "did you mean",
+    "do you want me to",
+    "should i",
+    "i need more information",
+    "ambiguous",
+)
+TRUE_ENV_VALUES = {"1", "true", "yes", "on"}
 
 
 def build_parser() -> argparse.ArgumentParser:
@@ -240,15 +273,75 @@ def print_status(orchestrator_root: Path) -> int:
 
 def format_task_context(task: dict) -> str:
     """Build the task context string injected into the run-next template."""
-    files = ", ".join(task["files"]) if task["files"] else "none"
+    files = [str(item) for item in task.get("files", []) if str(item).strip()]
+    allowed_files = files or ["none specified"]
+    inspect_files = [
+        "AGENTS.md",
+        "docs/TASK_QUEUE.md",
+        "docs/PHASE_TASK_MAP.md",
+        "docs/IMPLEMENTATION_PLAN.md",
+        *allowed_files,
+    ]
     return "\n".join(
         [
+            f"TASK_ID: {task['id']}",
+            f"TASK_TITLE: {task['title']}",
+            "",
+            "OBJECTIVE:",
+            str(task.get("goal") or "none specified"),
+            "",
+            "FILES_ALLOWED_TO_MODIFY:",
+            *[f"- {path}" for path in allowed_files],
+            "",
+            "FILES_ALLOWED_TO_INSPECT:",
+            *[f"- {path}" for path in dict.fromkeys(inspect_files)],
+            "",
+            "OUT_OF_SCOPE:",
+            "- Do not modify files outside FILES_ALLOWED_TO_MODIFY.",
+            "- Do not refactor unrelated code.",
+            "- Do not introduce new dependencies unless explicitly listed.",
+            "- Do not change environment files, secrets, CI, deployment, or live config.",
+            "- Do not make architectural changes unless explicitly requested.",
+            "",
+            "ACCEPTANCE_CRITERIA:",
+            f"- {task.get('done_criteria') or 'none specified'}",
+            "",
+            "VALIDATION_COMMANDS:",
+            "- Run targeted tests for changed modules.",
+            "- python -m pytest",
+            "",
+            "STOP_CONDITIONS:",
+            "- If the target file is unclear, stop and explain the ambiguity.",
+            "- If required context is missing, stop and explain what is missing.",
+            "- If implementation requires modifying files outside FILES_ALLOWED_TO_MODIFY, stop.",
+            "- If tests or validation commands are missing and correctness cannot be verified, stop.",
+            "- If secrets, credentials, live config, deployment, or risky paths are required, stop.",
+            "",
+            "## Task Queue Context",
             f"Task {task['id']}: {task['title']}",
-            f"Goal: {task['goal']}",
-            f"Files likely affected: {files}",
-            f"Done criteria: {task['done_criteria']}",
+            f"Goal: {task.get('goal') or 'none specified'}",
+            "Files likely affected: " + (", ".join(files) if files else "none"),
+            f"Done criteria: {task.get('done_criteria') or 'none specified'}",
         ]
     )
+
+
+def lint_codex_prompt_contract(prompt_text: str) -> list[str]:
+    """Return prompt-contract issues that must block headless Codex auto mode."""
+    issues: list[str] = []
+    if not prompt_text.strip():
+        return ["prompt is empty"]
+
+    for field in REQUIRED_CODEX_PROMPT_FIELDS:
+        if field not in prompt_text:
+            issues.append(f"missing required field: {field}")
+
+    lower_prompt = prompt_text.lower()
+    for phrase in VAGUE_CODEX_PROMPT_PHRASES:
+        if phrase in lower_prompt:
+            issues.append(f"blocked vague phrase: {phrase}")
+
+    return issues
 
 
 def _local_assemble_prompt(template_path: str, task_context: str, output_path: str) -> str:
@@ -555,6 +648,21 @@ def _loop_interval_seconds() -> int:
     return max(1, int(os.getenv("LOOP_INTERVAL_SECONDS", "30")))
 
 
+def _codex_timeout_seconds() -> int:
+    """Read the maximum time allowed for one Codex subprocess."""
+    return max(1, int(os.getenv("CODEX_TIMEOUT_SECONDS", "300")))
+
+
+def _max_auto_tasks_per_session() -> int:
+    """Read the successful auto-task limit for one run-loop session."""
+    return max(1, int(os.getenv("MAX_AUTO_TASKS_PER_SESSION", "5")))
+
+
+def _env_flag(name: str, default: str = "false") -> bool:
+    """Return True when an environment flag is set to an affirmative value."""
+    return os.getenv(name, default).strip().lower() in TRUE_ENV_VALUES
+
+
 def _approval_timeout_seconds() -> int:
     """Read the human gate timeout."""
     return max(1, int(os.getenv("ORCHESTRATOR_APPROVAL_TIMEOUT_SECONDS", "3600")))
@@ -661,8 +769,121 @@ def _codex_auto_message(task: dict) -> str:
     return (
         f"[ORCHESTRATOR] Running Codex on task {task['id']}: {task['title']}\n"
         f"Implementing: {task['goal']}\n"
-        "Mode: auto via `codex run --prompt-file agent-orchestrator/last_prompt.md` "
-        "because CODEX_MODE=auto allows the loop to execute the prepared prompt directly."
+        "Mode: auto via `codex exec` with stdin because CODEX_MODE=auto allows "
+        "the loop to execute the prepared prompt directly after approval gates pass."
+    )
+
+
+def _codex_last_message_path(project_root: Path) -> Path:
+    """Resolve the configured file where Codex writes its final assistant message."""
+    raw_path = os.getenv(
+        "CODEX_LAST_MESSAGE_PATH",
+        "agent-orchestrator/codex_last_message.md",
+    ).strip()
+    path = Path(raw_path)
+    if not path.is_absolute():
+        path = project_root / path
+    return path
+
+
+def _build_codex_exec_command(project_root: Path, codex_last_message_path: Path) -> list[str]:
+    """Build the Stage 12D Codex CLI command using stdin for the prompt."""
+    command = ["codex"]
+    if _env_flag("CODEX_ENABLE_SEARCH"):
+        command.append("--search")
+    command.extend(
+        [
+            "exec",
+            "-C",
+            str(project_root),
+            "-s",
+            "workspace-write",
+            "-c",
+            'approval_policy="never"',
+            "-o",
+            str(codex_last_message_path),
+        ]
+    )
+    codex_model = os.getenv("CODEX_MODEL", "").strip()
+    if codex_model:
+        command.extend(["-m", codex_model])
+    # Keep the stdin prompt marker after options so the CLI applies every flag.
+    command.append("-")
+    return command
+
+
+def _string_output(value: object) -> str:
+    """Normalize subprocess output that may arrive as text, bytes, or None."""
+    if value is None:
+        return ""
+    if isinstance(value, bytes):
+        return value.decode("utf-8", errors="replace")
+    return str(value)
+
+
+def _read_codex_last_message(codex_last_message_path: Path) -> tuple[str, str]:
+    """Read Codex's final message file, returning a warning if it is absent."""
+    if not codex_last_message_path.exists():
+        return "", f"Warning: {codex_last_message_path} was not created."
+    return codex_last_message_path.read_text(encoding="utf-8", errors="replace"), ""
+
+
+def _combined_codex_output(stdout: object, stderr: object, last_message: str, warning: str = "") -> str:
+    """Join Codex subprocess output and final message for inspection."""
+    sections = [
+        _string_output(stdout).strip(),
+        _string_output(stderr).strip(),
+        last_message.strip(),
+        warning.strip(),
+    ]
+    return "\n\n".join(section for section in sections if section)
+
+
+def _contains_codex_clarification(output_text: str) -> bool:
+    """Detect explicit or likely Codex clarification output."""
+    if CODEX_CLARIFICATION_MARKER in output_text:
+        return True
+    lowered = output_text.lower()
+    return any(phrase in lowered for phrase in CODEX_CLARIFICATION_PHRASES)
+
+
+def _prompt_blocked_message(task: dict, issues: list[str]) -> str:
+    """Render the Discord/operator message for an underspecified prompt."""
+    issue_lines = "\n".join(f"- {issue}" for issue in issues)
+    return (
+        "[ORCHESTRATOR · PROMPT BLOCKED]\n"
+        "Codex was not invoked because the prompt is underspecified.\n\n"
+        f"Issues:\n{issue_lines}\n\n"
+        f"Reply !clarify {task['id']} <details> or update the task docs."
+    )
+
+
+def _codex_timeout_message(task: dict, timeout_seconds: int) -> str:
+    """Render the timeout notification for operators."""
+    return (
+        "[ORCHESTRATOR · CODEX TIMEOUT]\n"
+        f"Task {task['id']}: {task['title']}\n"
+        f"Codex exceeded CODEX_TIMEOUT_SECONDS={timeout_seconds}.\n"
+        f"Loop paused. Reply !resume to retry or !skip-task {task['id']} to skip."
+    )
+
+
+def _codex_question_message(task: dict, output_text: str) -> str:
+    """Render the clarification-needed notification for operators."""
+    return (
+        "[ORCHESTRATOR · CODEX QUESTION]\n"
+        f"Task {task['id']}: {task['title']} needs clarification.\n\n"
+        f"{_truncate_for_discord(output_text, limit=1500)}\n\n"
+        f"Reply !clarify {task['id']} <your answer> or !skip-task {task['id']}"
+    )
+
+
+def _codex_failure_message(task: dict, output_text: str) -> str:
+    """Render a non-zero Codex exit summary."""
+    return (
+        "[ORCHESTRATOR · CODEX FAILURE]\n"
+        f"Task {task['id']}: {task['title']}\n\n"
+        f"{_truncate_for_discord(output_text, limit=1500)}"
     )
 
 
@@ -703,6 +924,8 @@ def _run_validation_for_task(
 
     if not bool(validation_result["passed"]):
         failure_notes = "; ".join(errors + warnings)
+        if codex_mode == "auto":
+            discord_notifier.notify(_validation_failure_message(active_task, errors))
         _mark_task_status(
             db_path,
             int(active_task["id"]),
@@ -772,6 +995,10 @@ def _run_validation_for_task(
         status="done",
         summary=f"Task {active_task['id']} passed deterministic validation.",
     )
+    if codex_mode == "auto":
+        discord_notifier.notify(
+            f"[ORCHESTRATOR] Task {active_task['id']} complete: {active_task['title']}"
+        )
     return True
 
 
@@ -805,6 +1032,7 @@ def run_loop(orchestrator_root: Path, max_iterations: int | None = None) -> int:
     )
 
     iterations = 0
+    completed_tasks_this_session = 0
     while True:
         if _max_iterations_reached(iterations, max_iterations):
             return 0
@@ -925,6 +1153,7 @@ def run_loop(orchestrator_root: Path, max_iterations: int | None = None) -> int:
         active_task_status = _task_status(db_path, int(active_task["id"]))
         is_manual_resume = codex_mode == "manual" and active_task_status in {"in_progress", "failed"}
         codex_return_code = 0
+        _set_setting(db_path, "current_task_id", str(active_task["id"]))
 
         if is_manual_resume:
             _record_operator_event(
@@ -1041,6 +1270,47 @@ def run_loop(orchestrator_root: Path, max_iterations: int | None = None) -> int:
                 )
                 continue
 
+            prompt_text = prompt_output_path.read_text(encoding="utf-8", errors="replace")
+            prompt_issues = lint_codex_prompt_contract(prompt_text)
+            if prompt_issues:
+                message = _prompt_blocked_message(active_task, prompt_issues)
+                _set_paused(db_path, True)
+                _set_setting(db_path, "awaiting_clarification_task_id", str(active_task["id"]))
+                _mark_task_status(
+                    db_path,
+                    int(active_task["id"]),
+                    "in_progress",
+                    "Codex prompt blocked before invocation: " + "; ".join(prompt_issues),
+                    _phase_display_name(current_phase),
+                    str(active_task["title"]),
+                )
+                discord_notifier.notify(message)
+                _record_operator_event(
+                    db_path,
+                    "codex_prompt_blocked",
+                    task=active_task,
+                    phase=_phase_display_name(current_phase),
+                    status="paused",
+                    summary="Codex prompt blocked before invocation: " + "; ".join(prompt_issues),
+                    details={"issues": prompt_issues},
+                )
+                _log_loop_activity(
+                    project_root,
+                    _phase_display_name(current_phase),
+                    active_task["id"],
+                    "Codex prompt blocked",
+                    "blocked",
+                    "; ".join(prompt_issues),
+                    validation="Not run",
+                )
+                return 0
+
+            codex_last_message_path = _codex_last_message_path(project_root)
+            if codex_last_message_path.exists():
+                codex_last_message_path.unlink()
+            codex_command = _build_codex_exec_command(project_root, codex_last_message_path)
+            timeout_seconds = _codex_timeout_seconds()
+            discord_notifier.notify(_codex_auto_message(active_task))
             _record_operator_event(
                 db_path,
                 "validating",
@@ -1048,15 +1318,106 @@ def run_loop(orchestrator_root: Path, max_iterations: int | None = None) -> int:
                 phase=_phase_display_name(current_phase),
                 status="codex_running",
                 summary=f"Running Codex automatically for Task {active_task['id']}.",
+                details={
+                    "command": " ".join(codex_command),
+                    "timeout_seconds": timeout_seconds,
+                },
             )
-            codex_result = subprocess.run(
-                ["codex", "run", "--prompt-file", "agent-orchestrator/last_prompt.md"],
-                cwd=project_root,
-                capture_output=True,
-                text=True,
-                check=False,
+
+            try:
+                codex_result = subprocess.run(
+                    codex_command,
+                    input=prompt_text,
+                    capture_output=True,
+                    text=True,
+                    timeout=timeout_seconds,
+                    cwd=project_root,
+                    check=False,
+                )
+            except subprocess.TimeoutExpired as exc:
+                output_text = _combined_codex_output(exc.stdout, exc.stderr, "")
+                message = _codex_timeout_message(active_task, timeout_seconds)
+                _set_paused(db_path, True)
+                _set_setting(db_path, "awaiting_review_task_id", str(active_task["id"]))
+                discord_notifier.notify(message)
+                _record_operator_event(
+                    db_path,
+                    "codex_timeout",
+                    task=active_task,
+                    phase=_phase_display_name(current_phase),
+                    status="paused",
+                    summary=f"Codex timed out after {timeout_seconds} seconds.",
+                    details={"output": _truncate_for_discord(output_text, limit=1500)},
+                )
+                _log_loop_activity(
+                    project_root,
+                    _phase_display_name(current_phase),
+                    active_task["id"],
+                    "Codex timeout",
+                    "timeout",
+                    output_text or f"Codex exceeded CODEX_TIMEOUT_SECONDS={timeout_seconds}.",
+                    validation="Not run",
+                )
+                return 0
+
+            last_message, last_message_warning = _read_codex_last_message(codex_last_message_path)
+            output_text = _combined_codex_output(
+                codex_result.stdout,
+                codex_result.stderr,
+                last_message,
+                last_message_warning,
             )
+
+            if _contains_codex_clarification(output_text):
+                _set_paused(db_path, True)
+                _set_setting(db_path, "awaiting_clarification_task_id", str(active_task["id"]))
+                message = _codex_question_message(active_task, output_text)
+                discord_notifier.notify(message)
+                _record_operator_event(
+                    db_path,
+                    "codex_question",
+                    task=active_task,
+                    phase=_phase_display_name(current_phase),
+                    status="paused",
+                    summary="Codex requested clarification or produced ambiguous output.",
+                    details={"output": _truncate_for_discord(output_text, limit=1500)},
+                )
+                _log_loop_activity(
+                    project_root,
+                    _phase_display_name(current_phase),
+                    active_task["id"],
+                    "Codex clarification requested",
+                    "clarification_required",
+                    _truncate_for_discord(output_text, limit=1500),
+                    validation="Not run",
+                )
+                return 0
+
             codex_return_code = codex_result.returncode
+            if codex_return_code != 0:
+                _set_paused(db_path, True)
+                _set_setting(db_path, "awaiting_review_task_id", str(active_task["id"]))
+                message = _codex_failure_message(active_task, output_text)
+                discord_notifier.notify(message)
+                _record_operator_event(
+                    db_path,
+                    "codex_failure",
+                    task=active_task,
+                    phase=_phase_display_name(current_phase),
+                    status="paused",
+                    summary=f"Codex exited with return code {codex_return_code}.",
+                    details={"output": _truncate_for_discord(output_text, limit=1500)},
+                )
+                _log_loop_activity(
+                    project_root,
+                    _phase_display_name(current_phase),
+                    active_task["id"],
+                    "Codex failed",
+                    "failed",
+                    _truncate_for_discord(output_text, limit=1500),
+                    validation="Not run",
+                )
+                return 0
 
         validation_passed = _run_validation_for_task(
             project_root,
@@ -1068,6 +1429,36 @@ def run_loop(orchestrator_root: Path, max_iterations: int | None = None) -> int:
         )
         if not validation_passed:
             continue
+        if codex_mode == "auto":
+            completed_tasks_this_session += 1
+            max_auto_tasks = _max_auto_tasks_per_session()
+            if completed_tasks_this_session >= max_auto_tasks:
+                _set_paused(db_path, True)
+                message = (
+                    "[ORCHESTRATOR]\n"
+                    f"Session limit reached ({max_auto_tasks} completed tasks).\n"
+                    "Loop paused for human review.\n"
+                    "Reply !resume to continue."
+                )
+                discord_notifier.notify(message)
+                _record_operator_event(
+                    db_path,
+                    "session_limit",
+                    task=active_task,
+                    phase=_phase_display_name(current_phase),
+                    status="paused",
+                    summary=f"Session limit reached after {max_auto_tasks} completed auto tasks.",
+                )
+                _log_loop_activity(
+                    project_root,
+                    _phase_display_name(current_phase),
+                    active_task["id"],
+                    "Auto session limit reached",
+                    "paused",
+                    f"MAX_AUTO_TASKS_PER_SESSION={max_auto_tasks}.",
+                    validation="Passed",
+                )
+                return 0
         if _max_iterations_reached(iterations, max_iterations):
             return 0
         time.sleep(_loop_interval_seconds())

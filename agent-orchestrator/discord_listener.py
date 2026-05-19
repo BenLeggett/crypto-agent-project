@@ -23,6 +23,7 @@ if str(MODULE_ROOT) not in sys.path:
 
 import prompt_runner
 import operator_events
+import activity_logger
 import local_llm_client
 import validation_failure_review
 from model_router import ModelTier
@@ -34,7 +35,7 @@ DISCORD_RESPONSE_LIMIT = 1900
 CARD_FIELD_LIMIT = 650
 CARD_PROGRESS_LIMIT = 420
 UNKNOWN_COMMAND_MESSAGE = (
-    "Unknown command. Available: !status !approve !reject !pause !resume !explain"
+    "Unknown command. Available: !status !approve !reject !pause !resume !explain !clarify !skip-task"
 )
 DEEP_DIAGNOSE_COMMAND = "!deep-diagnose"
 MEDIUM_REVIEW_START_PREFIX = "[ORCHESTRATOR - MEDIUM REVIEW START]"
@@ -220,7 +221,17 @@ def _event_label(event_type: str, status: str | None = None) -> str:
     if event_type == "resume_received":
         return "Resume selected"
     if event_type == "validating":
+        if status == "codex_running":
+            return "Codex running"
         return "Validating"
+    if event_type == "codex_prompt_blocked":
+        return "Prompt blocked"
+    if event_type == "codex_timeout":
+        return "Codex timed out"
+    if event_type == "codex_question":
+        return "Codex needs clarity"
+    if event_type == "codex_failure":
+        return "Codex failed"
     if event_type == "validation_failed":
         return "Failed"
     if event_type == "low_diagnosis_done":
@@ -247,6 +258,8 @@ def _event_label(event_type: str, status: str | None = None) -> str:
         return "Approval needed"
     if event_type == "paused":
         return "Paused"
+    if event_type == "session_limit":
+        return "Session limit"
     if event_type == "task_done":
         return "Done"
     return event_type.replace("_", " ").title()
@@ -276,7 +289,17 @@ def _card_status(latest_event: sqlite3.Row | None, task_status: str | None) -> s
         if event_type == "medium_review_running":
             return "Reviewing diagnosis"
         if event_type == "validating":
+            if status == "codex_running":
+                return "Codex running"
             return "Validating"
+        if event_type == "codex_prompt_blocked":
+            return "Prompt blocked"
+        if event_type == "codex_timeout":
+            return "Codex timed out"
+        if event_type == "codex_question":
+            return "Needs clarification"
+        if event_type == "codex_failure":
+            return "Codex failed"
         if event_type == "validation_failed":
             return "Failed validation"
         if event_type in {"low_diagnosis_done", "low_diagnosis_unavailable"}:
@@ -287,6 +310,8 @@ def _card_status(latest_event: sqlite3.Row | None, task_status: str | None) -> s
             return "Prompt ready"
         if event_type == "approval_required":
             return "Approval required"
+        if event_type == "session_limit":
+            return "Session limit reached"
         if event_type == "task_done" or status == "done":
             return "Complete"
     if (task_status or "").strip().lower() == "failed":
@@ -334,6 +359,16 @@ def _friendly_summary(summary: str) -> str:
         )
     if cleaned.startswith("Diagnosis unavailable:"):
         return cleaned.replace("Medium local review unavailable:", "medium review unavailable:")
+    if lowered.startswith("codex prompt blocked"):
+        return "Codex was not invoked because the generated prompt is incomplete or too vague."
+    if lowered.startswith("codex requested clarification"):
+        return "Codex needs a human clarification before this task can safely continue."
+    if lowered.startswith("codex timed out"):
+        return "Codex exceeded the configured timeout. Review the task, then retry or skip it."
+    if lowered.startswith("codex exited with return code"):
+        return "Codex exited with an error. Review the output, then retry or skip the task."
+    if lowered.startswith("session limit reached"):
+        return "Auto mode reached the configured session limit. Review completed work before resuming."
     return cleaned
 
 
@@ -342,9 +377,14 @@ def _latest_finding(events: list[sqlite3.Row]) -> str:
     for row in reversed(events):
         event_type = str(row["event_type"])
         if event_type in {
+            "codex_failure",
+            "codex_prompt_blocked",
+            "codex_question",
+            "codex_timeout",
             "medium_review_done",
             "low_diagnosis_done",
             "low_diagnosis_unavailable",
+            "session_limit",
             "validation_failed",
         }:
             summary = str(row["summary"] or "").strip()
@@ -407,6 +447,17 @@ def _next_card_action(connection: sqlite3.Connection, latest_event: sqlite3.Row 
         return "Wait for the current step to finish."
     if latest_event is not None and str(latest_event["event_type"]) == "approval_required":
         return "Use Approve or Reject after reviewing the request."
+    awaiting_clarification = _get_setting(connection, "awaiting_clarification_task_id", "")
+    awaiting_review = _get_setting(connection, "awaiting_review_task_id", "")
+    if awaiting_clarification:
+        return (
+            f"Use Clarify Task {awaiting_clarification} to add missing details, "
+            f"or Skip Task {awaiting_clarification} if this task should wait."
+        )
+    if awaiting_review:
+        return f"Review the Codex result, then use Resume to retry or Skip Task {awaiting_review}."
+    if latest_event is not None and str(latest_event["event_type"]) == "session_limit":
+        return "Review the completed work, then use Resume when ready for another auto session."
     normalized = (task_status or "").strip().lower()
     if normalized == "failed":
         finding = _latest_finding(operator_events.recent_events(connection, limit=7))
@@ -538,6 +589,44 @@ def _read_paused_state(connection: sqlite3.Connection) -> str:
     return "paused" if str(row["value"]) == "1" else "running"
 
 
+def _get_setting(connection: sqlite3.Connection, key: str, default: str = "") -> str:
+    """Read one listener/orchestrator setting."""
+    row = connection.execute(
+        "SELECT value FROM settings WHERE key = ?",
+        (key,),
+    ).fetchone()
+    if row is None or row["value"] is None:
+        return default
+    return str(row["value"])
+
+
+def _set_setting(connection: sqlite3.Connection, key: str, value: str) -> None:
+    """Persist one listener/orchestrator setting."""
+    connection.execute(
+        """
+        INSERT OR REPLACE INTO settings (key, value)
+        VALUES (?, ?)
+        """,
+        (key, value),
+    )
+    connection.commit()
+
+
+def _last_prompt_path(db_path: str) -> Path:
+    """Resolve last_prompt.md beside the orchestrator state database."""
+    return Path(db_path).resolve().parent / "last_prompt.md"
+
+
+def _activity_path(db_path: str) -> Path:
+    """Resolve the project ACTIVITY.MD path from the orchestrator directory."""
+    return Path(db_path).resolve().parent.parent / "ACTIVITY.MD"
+
+
+def _matches_task_id(candidate: str, task_id: str) -> bool:
+    """Compare task ids while tolerating empty settings."""
+    return candidate.strip() != "" and candidate.strip() == task_id.strip()
+
+
 def _activity_entries(activity_path: Path, max_entries: int = 3) -> str:
     """Return the latest activity entries for compact operator context."""
     if not activity_path.exists():
@@ -619,6 +708,12 @@ def _loading_message_for_command(command: str, args: list[str]) -> str:
     if command == "!reject":
         ref = args[0] if args else "<missing-ref>"
         return f"[ORCHESTRATOR] Recording rejection for {ref}..."
+    if command == "!clarify":
+        task_id = args[0] if args else "<missing-task>"
+        return f"[ORCHESTRATOR] Adding clarification for Task {task_id}..."
+    if command == "!skip-task":
+        task_id = args[0] if args else "<missing-task>"
+        return f"[ORCHESTRATOR] Skipping Task {task_id}..."
     return "[ORCHESTRATOR] Processing command..."
 
 
@@ -635,6 +730,8 @@ def _action_taken_for_command(command: str, args: list[str]) -> str:
         "!explain": "Explain",
         "!pause": "Pause",
         "!resume": "Resume",
+        "!clarify": f"Clarify Task {args[0]}" if args else "Clarify",
+        "!skip-task": f"Skip Task {args[0]}" if args else "Skip Task",
     }.get(command, command)
 
 
@@ -647,6 +744,8 @@ def _waiting_on_for_command(command: str) -> str:
         "!resume": "resume flag write",
         "!approve": "approval record write",
         "!reject": "rejection record write",
+        "!clarify": "clarification append",
+        "!skip-task": "task skip update",
     }.get(command, "command processing")
 
 
@@ -680,6 +779,8 @@ def _blocked_during_medium_review_message(command: str, args: list[str]) -> str:
 def _button_followup_message(command: str, response: str) -> str:
     """Return the message that closes a deferred button interaction."""
     if command == "!explain":
+        return _text_excerpt_from_string(response, limit=DISCORD_RESPONSE_LIMIT)
+    if command in {"!clarify", "!skip-task"}:
         return _text_excerpt_from_string(response, limit=DISCORD_RESPONSE_LIMIT)
     if response == UNKNOWN_COMMAND_MESSAGE:
         return response
@@ -1114,10 +1215,38 @@ def _button_actions_for_state(db_path: str) -> list[dict[str, object]]:
             if operator_events.operator_in_flight(connection):
                 return []
             paused_state = _read_paused_state(connection)
-            if paused_state == "paused":
-                actions.append({"label": "Resume", "command": "!resume", "args": []})
+            awaiting_clarification = _get_setting(connection, "awaiting_clarification_task_id", "").strip()
+            awaiting_review = _get_setting(connection, "awaiting_review_task_id", "").strip()
+
+            if awaiting_clarification:
+                actions.append(
+                    {
+                        "label": f"Clarify Task {awaiting_clarification}",
+                        "command": "!clarify",
+                        "args": [awaiting_clarification],
+                    }
+                )
+                actions.append(
+                    {
+                        "label": f"Skip Task {awaiting_clarification}",
+                        "command": "!skip-task",
+                        "args": [awaiting_clarification],
+                    }
+                )
             else:
-                actions.append({"label": "Pause", "command": "!pause", "args": []})
+                if paused_state == "paused":
+                    actions.append({"label": "Resume", "command": "!resume", "args": []})
+                else:
+                    actions.append({"label": "Pause", "command": "!pause", "args": []})
+
+                if awaiting_review:
+                    actions.append(
+                        {
+                            "label": f"Skip Task {awaiting_review}",
+                            "command": "!skip-task",
+                            "args": [awaiting_review],
+                        }
+                    )
 
             row = _active_task_row(connection)
             if row is not None and str(row["status"]).strip().lower() == "failed":
@@ -1157,14 +1286,129 @@ def _record_approval(
 
 def _set_paused(connection: sqlite3.Connection, paused: bool) -> None:
     """Persist the orchestrator pause flag in the settings table."""
+    _set_setting(connection, "paused", "1" if paused else "0")
+
+
+def _append_human_clarification(db_path: str, task_id: str, clarification_text: str) -> None:
+    """Append a clearly delimited human clarification to last_prompt.md."""
+    prompt_path = _last_prompt_path(db_path)
+    block = (
+        "\n\n---\n\n"
+        "## Human Clarification\n\n"
+        f"Task: {task_id}\n\n"
+        f"{clarification_text.strip()}\n"
+    )
+    with prompt_path.open("a", encoding="utf-8") as handle:
+        handle.write(block)
+
+
+def _record_skip_activity(db_path: str, task_id: str, notes: str) -> None:
+    """Append a task skip entry to ACTIVITY.MD using the shared logger."""
+    activity_logger.log_activity(
+        {
+            "run_id": int(datetime.now().strftime("%H%M%S")),
+            "timestamp": _now_timestamp(),
+            "phase": "Agent orchestrator",
+            "task_id": task_id,
+            "action": "Task skipped",
+            "model_tier": "none",
+            "model_name": "",
+            "outcome": "skipped",
+            "validation": "Not run",
+            "notes": notes,
+        },
+        str(_activity_path(db_path)),
+    )
+
+
+def _current_or_awaiting_task_matches(connection: sqlite3.Connection, task_id: str) -> bool:
+    """Return True when the provided task id is current or awaiting operator input."""
+    awaiting_clarification = _get_setting(connection, "awaiting_clarification_task_id", "")
+    awaiting_review = _get_setting(connection, "awaiting_review_task_id", "")
+    current_task_id = _get_setting(connection, "current_task_id", "")
+    if any(
+        _matches_task_id(candidate, task_id)
+        for candidate in (awaiting_clarification, awaiting_review, current_task_id)
+    ):
+        return True
+
+    row = _active_task_row(connection)
+    return row is not None and str(row["task_id"]) == task_id
+
+
+def _handle_clarify(connection: sqlite3.Connection, args: list[str], db_path: str) -> str:
+    """Append human clarification for a task awaiting clarification."""
+    if len(args) < 2:
+        return "Usage: !clarify <task_id> <clarification text>"
+    task_id = args[0]
+    if not task_id.isdigit():
+        return "Usage: !clarify <task_id> <clarification text>"
+    clarification_text = " ".join(args[1:]).strip()
+    if not clarification_text:
+        return "Usage: !clarify <task_id> <clarification text>"
+
+    awaiting_task_id = _get_setting(connection, "awaiting_clarification_task_id", "")
+    if not _matches_task_id(awaiting_task_id, task_id):
+        return f"Task {task_id} is not awaiting clarification."
+
+    _append_human_clarification(db_path, task_id, clarification_text)
+    _set_setting(connection, "awaiting_clarification_task_id", "")
+    _set_paused(connection, paused=True)
+    row = _active_task_row(connection)
+    operator_events.record_event(
+        db_path,
+        "paused",
+        task_id=int(task_id),
+        phase=str(row["phase"]) if row is not None else None,
+        title=str(row["title"]) if row is not None else None,
+        status="paused",
+        summary=f"Clarification added for Task {task_id}. Awaiting Resume.",
+    )
+    return f"Clarification added for Task {task_id}. Send !resume to retry."
+
+
+def _handle_skip_task(connection: sqlite3.Connection, args: list[str], db_path: str) -> str:
+    """Mark the current or awaiting task skipped while keeping the loop paused."""
+    if len(args) != 1:
+        return "Usage: !skip-task <task_id>"
+    task_id = args[0]
+    if not task_id.isdigit():
+        return "Usage: !skip-task <task_id>"
+    if not _current_or_awaiting_task_matches(connection, task_id):
+        return f"Task {task_id} is not current or awaiting review."
+
+    row = connection.execute(
+        "SELECT phase, title FROM tasks WHERE task_id = ?",
+        (int(task_id),),
+    ).fetchone()
+    phase = str(row["phase"]) if row is not None else ""
+    title = str(row["title"]) if row is not None else ""
+    notes = "Skipped by operator through Discord command."
     connection.execute(
         """
-        INSERT OR REPLACE INTO settings (key, value)
-        VALUES ('paused', ?)
+        INSERT INTO tasks (task_id, phase, title, status, notes)
+        VALUES (?, ?, ?, 'skipped', ?)
+        ON CONFLICT(task_id) DO UPDATE SET
+            status = 'skipped',
+            notes = excluded.notes
         """,
-        ("1" if paused else "0",),
+        (int(task_id), phase, title, notes),
     )
     connection.commit()
+    _set_setting(connection, "awaiting_clarification_task_id", "")
+    _set_setting(connection, "awaiting_review_task_id", "")
+    _set_paused(connection, paused=True)
+    _record_skip_activity(db_path, task_id, notes)
+    operator_events.record_event(
+        db_path,
+        "paused",
+        task_id=int(task_id),
+        phase=phase or None,
+        title=title or None,
+        status="skipped",
+        summary=f"Task {task_id} skipped. Awaiting Resume.",
+    )
+    return f"Task {task_id} skipped. Send !resume to continue."
 
 
 def handle_command(command: str, args: list[str], db_path: str) -> str:
@@ -1222,6 +1466,12 @@ def handle_command(command: str, args: list[str], db_path: str) -> str:
                     summary="Resume selected. The run loop will continue shortly.",
                 )
                 return "Orchestrator resumed."
+
+            if command == "!clarify":
+                return _handle_clarify(connection, args, db_path)
+
+            if command == "!skip-task":
+                return _handle_skip_task(connection, args, db_path)
 
             if command == DEEP_DIAGNOSE_COMMAND:
                 return _start_medium_diagnosis(db_path)
@@ -1303,6 +1553,36 @@ def _run_discord_mode(bot_token: str, channel_id: int, db_path: str) -> None:
                     self.button_args = button_args
 
                 async def callback(self, interaction) -> None:
+                    if self.button_command == "!clarify" and len(self.button_args) == 1:
+                        task_id = self.button_args[0]
+
+                        class ClarifyModal(discord.ui.Modal, title=f"Clarify Task {task_id}"):
+                            clarification = discord.ui.TextInput(
+                                label="Clarification",
+                                style=discord.TextStyle.paragraph,
+                                required=True,
+                                max_length=1500,
+                                placeholder="Add the exact file, scope, acceptance detail, or constraint Codex needs.",
+                            )
+
+                            async def on_submit(self, modal_interaction) -> None:
+                                await defer_interaction(modal_interaction)
+                                response = await _run_command_async(
+                                    "!clarify",
+                                    [task_id, str(self.clarification.value)],
+                                    db_path,
+                                )
+                                _log_stderr("button", f"!clarify {task_id} <modal text>")
+                                _log_stderr("response", response)
+                                await send_interaction_followup(
+                                    modal_interaction,
+                                    _button_followup_message("!clarify", response),
+                                )
+                                await render_task_card(modal_interaction.channel)
+
+                        await interaction.response.send_modal(ClarifyModal())
+                        return
+
                     await defer_interaction(interaction)
                     if operator_in_flight_now() and self.button_command == "!explain":
                         await send_interaction_followup(

@@ -54,6 +54,12 @@ The local development orchestrator lives under `agent-orchestrator/`. Its
 validator remains deterministic and model-free; local LLM output is advisory
 operator guidance only.
 
+For first-time operation, setup, command reference, auto-mode expectations, and
+testing steps, read
+`agent-orchestrator/docs/ORCHESTRATOR_USAGE_GUIDE.md`.
+Before leaving Mode B unattended, follow
+`agent-orchestrator/docs/MODE_B_UNATTENDED_READINESS_CHECKLIST.md`.
+
 Run the Discord listener in mock stdin mode when no bot token is wired:
 
 ```bash
@@ -61,9 +67,22 @@ python agent-orchestrator/discord_listener.py
 ```
 
 Supported operator commands are `!status`, `!approve <ref>`, `!reject <ref>
-<notes>`, `!pause`, `!resume`, and read-only `!explain`. In Discord mode, only
-the latest bot-owned message has action buttons. Failed idle tasks also show a
-`Deep Diagnose` button for explicit medium-model review.
+<notes>`, `!pause`, `!resume`, read-only `!explain`, `!clarify <task_id>
+<details>`, and `!skip-task <task_id>`. In Discord mode, only the latest
+bot-owned message has action buttons. Failed idle tasks also show a
+`Deep Diagnose` button for explicit medium-model review. Stage 12D Codex states
+surface as dashboard-specific statuses and actions: clarification states show a
+`Clarify Task <id>` modal button plus `Skip Task <id>`, while timeout or Codex
+failure review states show retry/skip actions.
+
+Stage 12D Mode B automation invokes Codex with `codex exec` over stdin after
+orchestrator gates pass. Generated `agent-orchestrator/last_prompt.md` files
+start with a strict Codex task contract; auto mode lints that contract before
+launch, captures Codex's final response in `codex_last_message.md`, pauses on
+timeouts, non-zero exits, validation failures, or clarification markers, and
+limits successful auto cycles with `MAX_AUTO_TASKS_PER_SESSION`. Safe defaults
+remain documented in `agent-orchestrator/.env.example`, with `CODEX_MODE=manual`
+until the operator explicitly enables auto mode.
 
 Slow typed commands post action-specific progress text first with no buttons,
 then replace it with the result and buttons. Button clicks use Discord's native

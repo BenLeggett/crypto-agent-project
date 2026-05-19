@@ -9,10 +9,15 @@ from typing import Any
 
 IN_FLIGHT_EVENT_TYPES = {"resume_received", "validating", "medium_review_running"}
 TERMINAL_EVENT_TYPES = {
+    "codex_failure",
+    "codex_prompt_blocked",
+    "codex_question",
+    "codex_timeout",
     "prompt_ready",
     "validation_failed",
     "medium_review_done",
     "paused",
+    "session_limit",
     "task_done",
     "approval_required",
 }

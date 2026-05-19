@@ -39,10 +39,16 @@ def _optional_config(config: dict, key: str, default: str | None = None) -> str 
     return str(value)
 
 
-def assemble_prompt(template_path: str, task_context: str) -> str:
-    """Return a placeholder rendered prompt."""
-    _ = (template_path, task_context)
-    return ""
+def assemble_prompt(
+    template_path: str,
+    task_context: str,
+    output_path: str = "agent-orchestrator/last_prompt.md",
+) -> str:
+    """Render the fixed task prompt template and write it for Codex."""
+    template = Path(template_path).read_text(encoding="utf-8")
+    rendered = template.replace("{task_context}", task_context)
+    Path(output_path).write_text(rendered, encoding="utf-8")
+    return rendered
 
 
 def run_model_prompt(template_path: str, context: str, model_tier: object, config: dict) -> str:

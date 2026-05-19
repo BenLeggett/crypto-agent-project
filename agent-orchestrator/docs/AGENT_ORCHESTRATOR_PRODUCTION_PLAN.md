@@ -647,6 +647,19 @@ python orchestrator.py --run-next
 
 ## Stage 12d — Mode B hardening (Codex CLI automation)
 
+> **2026-05-17 update:** `adjusted_prestage_12d_and_stage_12d_exec_stdin.md`
+> supersedes the older `codex run --prompt-file` design in this section. Stage
+> 12d must use `codex exec -` with the prompt passed through stdin,
+> `-s workspace-write`, `-c approval_policy="never"`, and
+> `-o agent-orchestrator/codex_last_message.md`. Prompt linting is now a
+> required ambiguity gate before Codex is invoked.
+>
+> **Implementation status:** Stage 12d main was implemented on 2026-05-17 with
+> stdin-based Codex invocation, prompt linting, final-message capture,
+> timeout/failure/clarification pauses, deterministic validation after Codex
+> success, session limits, and Discord `!clarify <task_id> <details>` /
+> `!skip-task <task_id>` controls.
+
 ### Objective
 
 Enable `CODEX_MODE=auto` so the orchestrator invokes Codex CLI directly. Handle the case where Codex asks clarifying questions during a run. Add safeguards to prevent runaway automation.
@@ -655,9 +668,10 @@ Enable `CODEX_MODE=auto` so the orchestrator invokes Codex CLI directly. Handle 
 
 Manually test Codex CLI non-interactive behaviour first:
 
-```bash
-# Test 1: does Codex run non-interactively from a prompt file?
-codex run --prompt-file agent-orchestrator/last_prompt.md
+```powershell
+# Test 1: does Codex run non-interactively from stdin?
+$prompt = Get-Content agent-orchestrator\last_prompt.md -Raw
+$prompt | codex exec -C . -s workspace-write -c approval_policy='"never"' -o agent-orchestrator\codex_last_message.md -
 
 # Test 2: what happens when the prompt is ambiguous?
 # Create a deliberately vague last_prompt.md and observe whether Codex:
@@ -666,9 +680,16 @@ codex run --prompt-file agent-orchestrator/last_prompt.md
 #   c) exits with an error
 ```
 
-Document what you observe — it determines how much hardening is needed in the Codex invocation logic.
+Document what you observe in `adjusted_prestage_12d_and_stage_12d_exec_stdin.md`.
+Codex may proceed on vague prompts, so the orchestrator must lint and block
+underspecified prompts before launch.
 
 ### Codex prompt
+
+The older prompt below is retained as history only. Use the "Stage 12d Codex
+Implementation Prompt" from
+`agent-orchestrator/docs/adjusted_prestage_12d_and_stage_12d_exec_stdin.md`
+for implementation.
 
 ```
 Read docs/AGENT_ORCHESTRATOR_PLAN.md and docs/AGENT_ORCHESTRATOR_PRODUCTION_PLAN.md first.
@@ -833,7 +854,7 @@ agent-orchestrator/
     DISCORD_COMMAND_CHANNEL_ID=
     LOOP_INTERVAL_SECONDS=30
     CODEX_TIMEOUT_SECONDS=300
-    MAX_AUTO_TASKS_PER_SESSION=10
+    MAX_AUTO_TASKS_PER_SESSION=5
 ```
 
 New commands added to `discord_listener.py`:
@@ -845,5 +866,5 @@ New commands added to `discord_listener.py`:
 | `!reject <ref> <notes>` | 12a | Records rejection in state.sqlite |
 | `!pause` | 12a | Sets paused=1 in settings table |
 | `!resume` | 12a | Sets paused=0 in settings table |
-| `!clarify <text>` | 12d | Appends clarification to last_prompt.md |
-| `!skip-task` | 12d | Marks current task skipped, sets paused=0 |
+| `!clarify <task_id> <text>` | 12d | Appends clarification to last_prompt.md; paused remains 1 until `!resume` |
+| `!skip-task <task_id>` | 12d | Marks current/awaiting task skipped; paused remains 1 until `!resume` |

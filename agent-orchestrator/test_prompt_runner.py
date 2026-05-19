@@ -15,6 +15,21 @@ from model_router import ModelTier
 
 
 class PromptRunnerLocalTierConfigTests(unittest.TestCase):
+    def test_assemble_prompt_writes_rendered_template(self) -> None:
+        with tempfile.TemporaryDirectory() as temp_dir:
+            template_path = Path(temp_dir) / "run_next_task.md"
+            output_path = Path(temp_dir) / "last_prompt.md"
+            template_path.write_text("Header\n{task_context}\nFooter", encoding="utf-8")
+
+            rendered = prompt_runner.assemble_prompt(
+                str(template_path),
+                "TASK_ID: 38",
+                str(output_path),
+            )
+
+            self.assertEqual(rendered, "Header\nTASK_ID: 38\nFooter")
+            self.assertEqual(output_path.read_text(encoding="utf-8"), rendered)
+
     def test_local_low_uses_low_timeout_and_token_budget(self) -> None:
         old_complete = prompt_runner.local_llm_client.complete
         calls: list[dict[str, object]] = []

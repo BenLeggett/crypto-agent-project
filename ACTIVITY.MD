@@ -256,4 +256,33 @@
 - Updated the Discord task run card to use stable embed fields, friendlier failure text, collapsed progress, and followup acknowledgements so deferred button interactions do not leave the thinking indicator hanging.
 - Corrected current project state: Task 38 is pending and its implementation prompt has not been run yet; older prompt-generated entries remain historical only.
 
+## 2026-05-17
+- Completed agent orchestrator Pre-Stage 12D scaffolding for stdin-based `codex exec` automation.
+- Preserved `CODEX_MODE=manual` as the safe default while adding `.env.example` placeholders for `CODEX_MODEL`, `CODEX_TIMEOUT_SECONDS`, `MAX_AUTO_TASKS_PER_SESSION`, `CODEX_ENABLE_SEARCH`, and `CODEX_LAST_MESSAGE_PATH`.
+- Updated generated `last_prompt.md` shape so it begins with a strict Codex task contract and keeps the existing standing implementation instructions after the contract.
+- Added reusable prompt-contract linting for required fields and blocked vague phrases so Stage 12D can fail closed before invoking Codex.
+- Updated the production plan to point Stage 12D implementation at the adjusted stdin design instead of the older prompt-file flow.
+
+## 2026-05-17
+- Implemented agent orchestrator Stage 12D main Mode B hardening.
+- Updated `CODEX_MODE=auto` run-loop behavior to lint prompts, run `codex exec` through stdin, clear and inspect `codex_last_message.md`, pause on timeout, prompt block, clarification output, non-zero Codex exit, or validation failure, and count only successful Codex plus validation cycles toward `MAX_AUTO_TASKS_PER_SESSION`.
+- Added optional `CODEX_MODEL` and opt-in `CODEX_ENABLE_SEARCH` command construction while keeping `CODEX_MODE=manual` as the documented default.
+- Added Discord `!clarify <task_id> <details>` and `!skip-task <task_id>` commands; both keep the orchestrator paused until the operator sends `!resume`.
+- Added regression coverage for auto happy path, prompt blocking, timeout, clarification marker, non-zero exit, session limit, clarification append, and task skip behavior.
+
+## 2026-05-17
+- Added `agent-orchestrator/docs/ORCHESTRATOR_USAGE_GUIDE.md` as the final Stage 12D operator artifact.
+- Covered first-time nontechnical usage, technical environment setup, manual and auto run modes, Discord commands, Codex stdin smoke testing, failure recovery, validation commands, production checklist, and remaining manual wiring boundaries.
+- Linked the guide from `README.md` so maintainers can find the operating manual from the project entry point.
+
+## 2026-05-17
+- Reconciled the Discord operator dashboard with Stage 12D Codex states.
+- Added Codex-specific card event/status storytelling for prompt-blocked, clarification-needed, timeout, non-zero Codex exit, and session-limit states instead of showing all of them as generic paused states.
+- Updated dashboard actions so clarification waits show `Clarify Task <id>` and `Skip Task <id>`, review waits show retry/skip actions, and unavailable buttons remain hidden while work is in flight.
+- Added a Discord modal flow for clarification buttons while keeping typed `!clarify <task_id> <details>` support.
+
+## 2026-05-17
+- Added `agent-orchestrator/docs/MODE_B_UNATTENDED_READINESS_CHECKLIST.md` as the exact manual go/no-go checklist for leaving Mode B unattended.
+- Included a markdown flow diagram, evidence log template, preconditions, Discord control-plane verification, manual-mode cycle, Codex stdin smoke test, prompt-block/clarification flow, controlled auto rehearsal, failure rehearsals, skip-task flow, phase-gate flow, service runtime rehearsal, and final go/no-go rollback criteria.
+- Linked the readiness checklist from `README.md` and the orchestrator usage guide.
 

@@ -22,16 +22,27 @@ class RunLoopManualModeTests(unittest.TestCase):
             "PROJECT_ROOT": os.environ.get("PROJECT_ROOT"),
             "LOOP_INTERVAL_SECONDS": os.environ.get("LOOP_INTERVAL_SECONDS"),
             "LOCAL_VALIDATION_SUMMARY": os.environ.get("LOCAL_VALIDATION_SUMMARY"),
+            "CODEX_TIMEOUT_SECONDS": os.environ.get("CODEX_TIMEOUT_SECONDS"),
+            "MAX_AUTO_TASKS_PER_SESSION": os.environ.get("MAX_AUTO_TASKS_PER_SESSION"),
+            "CODEX_LAST_MESSAGE_PATH": os.environ.get("CODEX_LAST_MESSAGE_PATH"),
+            "CODEX_MODEL": os.environ.get("CODEX_MODEL"),
+            "CODEX_ENABLE_SEARCH": os.environ.get("CODEX_ENABLE_SEARCH"),
         }
         os.environ["CODEX_MODE"] = "manual"
         os.environ["PROJECT_ROOT"] = ".."
         os.environ["LOOP_INTERVAL_SECONDS"] = "1"
         os.environ["LOCAL_VALIDATION_SUMMARY"] = "failures_only"
+        os.environ["CODEX_TIMEOUT_SECONDS"] = "30"
+        os.environ["MAX_AUTO_TASKS_PER_SESSION"] = "5"
+        os.environ["CODEX_LAST_MESSAGE_PATH"] = "agent-orchestrator/codex_last_message.md"
+        os.environ["CODEX_MODEL"] = ""
+        os.environ["CODEX_ENABLE_SEARCH"] = "false"
 
         self._old_notify = orchestrator.discord_notifier.notify
         self._old_validate = orchestrator.validator.validate
         self._old_assemble_prompt = orchestrator.prompt_runner.assemble_prompt
         self._old_run_model_prompt = orchestrator.prompt_runner.run_model_prompt
+        self._old_subprocess_run = orchestrator.subprocess.run
         self._old_sleep = orchestrator.time.sleep
         self.notifications: list[str] = []
         self.validation_calls: list[str] = []
@@ -51,6 +62,7 @@ class RunLoopManualModeTests(unittest.TestCase):
         orchestrator.validator.validate = self._old_validate
         orchestrator.prompt_runner.assemble_prompt = self._old_assemble_prompt
         orchestrator.prompt_runner.run_model_prompt = self._old_run_model_prompt
+        orchestrator.subprocess.run = self._old_subprocess_run
         orchestrator.time.sleep = self._old_sleep
 
     def _write_project(self, root: Path) -> Path:
@@ -372,6 +384,172 @@ class RunLoopManualModeTests(unittest.TestCase):
                 connection.close()
 
             self.assertEqual(current_phase, ("Phase 11 - Model-informed paper decisioning",))
+
+    def test_auto_mode_invokes_codex_exec_stdin_then_validates(self) -> None:
+        with tempfile.TemporaryDirectory() as temp_dir:
+            os.environ["CODEX_MODE"] = "auto"
+            orchestrator_root = self._write_project(Path(temp_dir))
+            db_path = orchestrator_root / "state.sqlite"
+            self._seed_task(db_path, "pending")
+            calls: list[dict[str, object]] = []
+
+            def fake_run(command: list[str], **kwargs: object) -> object:
+                calls.append({"command": command, **kwargs})
+                output_path = Path(command[command.index("-o") + 1])
+                output_path.write_text("Codex finished.", encoding="utf-8")
+                return orchestrator.subprocess.CompletedProcess(command, 0, "stdout ok", "")
+
+            orchestrator.subprocess.run = fake_run
+            orchestrator.validator.validate = lambda project_root: {
+                "passed": True,
+                "errors": [],
+                "warnings": [],
+                "diff_summary": "",
+            }
+
+            self.assertEqual(orchestrator.run_loop(orchestrator_root, max_iterations=1), 0)
+
+            self.assertEqual(len(calls), 1)
+            command = calls[0]["command"]
+            self.assertIsInstance(command, list)
+            self.assertEqual(command[:2], ["codex", "exec"])
+            self.assertIn("-C", command)
+            self.assertIn("workspace-write", command)
+            self.assertIn('approval_policy="never"', command)
+            self.assertEqual(command[-1], "-")
+            self.assertIn("TASK_ID: 38", str(calls[0]["input"]))
+            status, paused = self._status_and_paused(db_path)
+            self.assertEqual(status, "done")
+            self.assertEqual(paused, "0")
+            self.assertTrue(any("Running Codex" in item for item in self.notifications))
+            self.assertTrue(any("complete" in item for item in self.notifications))
+
+    def test_auto_mode_blocks_underspecified_prompt_before_codex(self) -> None:
+        with tempfile.TemporaryDirectory() as temp_dir:
+            os.environ["CODEX_MODE"] = "auto"
+            orchestrator_root = self._write_project(Path(temp_dir))
+            db_path = orchestrator_root / "state.sqlite"
+            self._seed_task(db_path, "pending")
+
+            def assemble(template_path: str, task_context: str, output_path: str) -> str:
+                _ = (template_path, task_context)
+                rendered = "Fix the issue in the project. Do the right thing."
+                Path(output_path).write_text(rendered, encoding="utf-8")
+                return rendered
+
+            orchestrator.prompt_runner.assemble_prompt = assemble
+            orchestrator.subprocess.run = lambda *args, **kwargs: self.fail("Codex must not be invoked")
+
+            self.assertEqual(orchestrator.run_loop(orchestrator_root, max_iterations=1), 0)
+
+            status, paused = self._status_and_paused(db_path)
+            self.assertEqual(status, "in_progress")
+            self.assertEqual(paused, "1")
+            self.assertTrue(any("PROMPT BLOCKED" in item for item in self.notifications))
+            connection = sqlite3.connect(db_path)
+            try:
+                awaiting = connection.execute(
+                    "SELECT value FROM settings WHERE key = 'awaiting_clarification_task_id'"
+                ).fetchone()
+            finally:
+                connection.close()
+            self.assertEqual(awaiting, ("38",))
+
+    def test_auto_mode_timeout_pauses_without_validation(self) -> None:
+        with tempfile.TemporaryDirectory() as temp_dir:
+            os.environ["CODEX_MODE"] = "auto"
+            os.environ["CODEX_TIMEOUT_SECONDS"] = "5"
+            orchestrator_root = self._write_project(Path(temp_dir))
+            db_path = orchestrator_root / "state.sqlite"
+            self._seed_task(db_path, "pending")
+            orchestrator.subprocess.run = lambda *args, **kwargs: (_ for _ in ()).throw(
+                orchestrator.subprocess.TimeoutExpired(args[0], 5, output="partial")
+            )
+            orchestrator.validator.validate = lambda project_root: self.validation_calls.append(project_root)
+
+            self.assertEqual(orchestrator.run_loop(orchestrator_root, max_iterations=1), 0)
+
+            status, paused = self._status_and_paused(db_path)
+            self.assertEqual(status, "in_progress")
+            self.assertEqual(paused, "1")
+            self.assertEqual(self.validation_calls, [])
+            self.assertTrue(any("CODEX TIMEOUT" in item for item in self.notifications))
+
+    def test_auto_mode_clarification_marker_pauses_without_validation(self) -> None:
+        with tempfile.TemporaryDirectory() as temp_dir:
+            os.environ["CODEX_MODE"] = "auto"
+            orchestrator_root = self._write_project(Path(temp_dir))
+            db_path = orchestrator_root / "state.sqlite"
+            self._seed_task(db_path, "pending")
+
+            def fake_run(command: list[str], **kwargs: object) -> object:
+                output_path = Path(command[command.index("-o") + 1])
+                output_path.write_text(
+                    "CODEX_NEEDS_CLARIFICATION:\nWhich file should be changed?",
+                    encoding="utf-8",
+                )
+                return orchestrator.subprocess.CompletedProcess(command, 0, "", "")
+
+            orchestrator.subprocess.run = fake_run
+            orchestrator.validator.validate = lambda project_root: self.validation_calls.append(project_root)
+
+            self.assertEqual(orchestrator.run_loop(orchestrator_root, max_iterations=1), 0)
+
+            status, paused = self._status_and_paused(db_path)
+            self.assertEqual(status, "in_progress")
+            self.assertEqual(paused, "1")
+            self.assertEqual(self.validation_calls, [])
+            self.assertTrue(any("CODEX QUESTION" in item for item in self.notifications))
+
+    def test_auto_mode_nonzero_exit_pauses_without_validation(self) -> None:
+        with tempfile.TemporaryDirectory() as temp_dir:
+            os.environ["CODEX_MODE"] = "auto"
+            orchestrator_root = self._write_project(Path(temp_dir))
+            db_path = orchestrator_root / "state.sqlite"
+            self._seed_task(db_path, "pending")
+            orchestrator.subprocess.run = lambda command, **kwargs: orchestrator.subprocess.CompletedProcess(
+                command,
+                2,
+                "stdout",
+                "stderr",
+            )
+            orchestrator.validator.validate = lambda project_root: self.validation_calls.append(project_root)
+
+            self.assertEqual(orchestrator.run_loop(orchestrator_root, max_iterations=1), 0)
+
+            status, paused = self._status_and_paused(db_path)
+            self.assertEqual(status, "in_progress")
+            self.assertEqual(paused, "1")
+            self.assertEqual(self.validation_calls, [])
+            self.assertTrue(any("CODEX FAILURE" in item for item in self.notifications))
+
+    def test_auto_mode_session_limit_pauses_after_successful_cycle(self) -> None:
+        with tempfile.TemporaryDirectory() as temp_dir:
+            os.environ["CODEX_MODE"] = "auto"
+            os.environ["MAX_AUTO_TASKS_PER_SESSION"] = "1"
+            orchestrator_root = self._write_project(Path(temp_dir))
+            db_path = orchestrator_root / "state.sqlite"
+            self._seed_task(db_path, "pending")
+
+            def fake_run(command: list[str], **kwargs: object) -> object:
+                output_path = Path(command[command.index("-o") + 1])
+                output_path.write_text("done", encoding="utf-8")
+                return orchestrator.subprocess.CompletedProcess(command, 0, "", "")
+
+            orchestrator.subprocess.run = fake_run
+            orchestrator.validator.validate = lambda project_root: {
+                "passed": True,
+                "errors": [],
+                "warnings": [],
+                "diff_summary": "",
+            }
+
+            self.assertEqual(orchestrator.run_loop(orchestrator_root, max_iterations=3), 0)
+
+            status, paused = self._status_and_paused(db_path)
+            self.assertEqual(status, "done")
+            self.assertEqual(paused, "1")
+            self.assertTrue(any("Session limit reached" in item for item in self.notifications))
 
 
 if __name__ == "__main__":

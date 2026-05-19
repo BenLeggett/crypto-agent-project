@@ -166,6 +166,86 @@ class DiscordListenerTests(unittest.TestCase):
 
             self.assertEqual(paused_value, ("0",))
 
+    def test_clarify_appends_human_clarification_and_keeps_paused(self) -> None:
+        listener = load_listener_module()
+
+        with tempfile.TemporaryDirectory() as temp_dir:
+            db_path = self._create_project_db(Path(temp_dir))
+            connection = sqlite3.connect(db_path)
+            try:
+                connection.execute(
+                    "INSERT OR REPLACE INTO settings (key, value) VALUES ('awaiting_clarification_task_id', '38')"
+                )
+                connection.commit()
+            finally:
+                connection.close()
+
+            response = listener.handle_command(
+                "!clarify",
+                ["38", "Use", "apps/ai_router/router.py", "only."],
+                str(db_path),
+            )
+
+            self.assertEqual(response, "Clarification added for Task 38. Send !resume to retry.")
+            prompt_text = (db_path.parent / "last_prompt.md").read_text(encoding="utf-8")
+            self.assertIn("## Human Clarification", prompt_text)
+            self.assertIn("Task: 38", prompt_text)
+            self.assertIn("Use apps/ai_router/router.py only.", prompt_text)
+            connection = sqlite3.connect(db_path)
+            try:
+                settings = dict(connection.execute("SELECT key, value FROM settings").fetchall())
+            finally:
+                connection.close()
+            self.assertEqual(settings["paused"], "1")
+            self.assertEqual(settings["awaiting_clarification_task_id"], "")
+
+    def test_clarify_rejects_mismatched_task(self) -> None:
+        listener = load_listener_module()
+
+        with tempfile.TemporaryDirectory() as temp_dir:
+            db_path = self._create_project_db(Path(temp_dir))
+            connection = sqlite3.connect(db_path)
+            try:
+                connection.execute(
+                    "INSERT OR REPLACE INTO settings (key, value) VALUES ('awaiting_clarification_task_id', '38')"
+                )
+                connection.commit()
+            finally:
+                connection.close()
+
+            response = listener.handle_command("!clarify", ["39", "Use file X."], str(db_path))
+
+            self.assertEqual(response, "Task 39 is not awaiting clarification.")
+            self.assertNotIn(
+                "Human Clarification",
+                (db_path.parent / "last_prompt.md").read_text(encoding="utf-8"),
+            )
+
+    def test_skip_task_marks_current_task_skipped_and_logs_activity(self) -> None:
+        listener = load_listener_module()
+
+        with tempfile.TemporaryDirectory() as temp_dir:
+            db_path = self._create_project_db(Path(temp_dir))
+            response = listener.handle_command("!skip-task", ["38"], str(db_path))
+
+            self.assertEqual(response, "Task 38 skipped. Send !resume to continue.")
+            connection = sqlite3.connect(db_path)
+            try:
+                status = connection.execute(
+                    "SELECT status FROM tasks WHERE task_id = 38"
+                ).fetchone()
+                paused = connection.execute(
+                    "SELECT value FROM settings WHERE key = 'paused'"
+                ).fetchone()
+            finally:
+                connection.close()
+            self.assertEqual(status, ("skipped",))
+            self.assertEqual(paused, ("1",))
+            self.assertIn(
+                "Task skipped",
+                (Path(temp_dir) / "ACTIVITY.MD").read_text(encoding="utf-8"),
+            )
+
     def test_explain_returns_local_model_summary_without_mutating_state(self) -> None:
         listener = load_listener_module()
 
@@ -346,6 +426,13 @@ class DiscordListenerTests(unittest.TestCase):
             listener._button_followup_message("!wat", listener.UNKNOWN_COMMAND_MESSAGE),
             listener.UNKNOWN_COMMAND_MESSAGE,
         )
+        self.assertIn(
+            "Clarification added",
+            listener._button_followup_message(
+                "!clarify",
+                "Clarification added for Task 38. Send !resume to retry.",
+            ),
+        )
 
     def test_button_actions_reflect_pause_and_pending_approval(self) -> None:
         listener = load_listener_module()
@@ -385,6 +472,77 @@ class DiscordListenerTests(unittest.TestCase):
             ]
             self.assertNotIn("Approve phase-10-exit", labels_after_approval)
             self.assertNotIn("Reject phase-10-exit", labels_after_approval)
+
+    def test_card_tells_codex_clarification_story_and_buttons_match(self) -> None:
+        listener = load_listener_module()
+
+        with tempfile.TemporaryDirectory() as temp_dir:
+            db_path = self._create_project_db(Path(temp_dir))
+            connection = sqlite3.connect(db_path)
+            try:
+                connection.execute(
+                    "UPDATE tasks SET status = 'in_progress', notes = 'Codex needs clarification' WHERE task_id = 38"
+                )
+                connection.execute(
+                    "INSERT OR REPLACE INTO settings (key, value) VALUES ('awaiting_clarification_task_id', '38')"
+                )
+                connection.commit()
+            finally:
+                connection.close()
+            listener.operator_events.record_event(
+                db_path,
+                "codex_question",
+                task_id=38,
+                phase="Phase 10 - AI router and cost controls",
+                title="Implement AI router core",
+                status="paused",
+                summary="Codex requested clarification or produced ambiguous output.",
+            )
+
+            payload = listener._task_run_card_payload(str(db_path))
+            labels = [str(action["label"]) for action in listener._button_actions_for_state(str(db_path))]
+
+            self.assertIn("Needs clarification", str(payload["status"]))
+            self.assertIn("Codex needs a human clarification", str(payload["finding"]))
+            self.assertIn("Clarify Task 38", str(payload["next"]))
+            self.assertIn("Clarify Task 38", labels)
+            self.assertIn("Skip Task 38", labels)
+            self.assertNotIn("Resume", labels)
+
+    def test_card_tells_codex_timeout_story_and_offers_retry_or_skip(self) -> None:
+        listener = load_listener_module()
+
+        with tempfile.TemporaryDirectory() as temp_dir:
+            db_path = self._create_project_db(Path(temp_dir))
+            connection = sqlite3.connect(db_path)
+            try:
+                connection.execute(
+                    "UPDATE tasks SET status = 'in_progress', notes = 'Codex timeout' WHERE task_id = 38"
+                )
+                connection.execute(
+                    "INSERT OR REPLACE INTO settings (key, value) VALUES ('awaiting_review_task_id', '38')"
+                )
+                connection.commit()
+            finally:
+                connection.close()
+            listener.operator_events.record_event(
+                db_path,
+                "codex_timeout",
+                task_id=38,
+                phase="Phase 10 - AI router and cost controls",
+                title="Implement AI router core",
+                status="paused",
+                summary="Codex timed out after 300 seconds.",
+            )
+
+            payload = listener._task_run_card_payload(str(db_path))
+            labels = [str(action["label"]) for action in listener._button_actions_for_state(str(db_path))]
+
+            self.assertIn("Codex timed out", str(payload["status"]))
+            self.assertIn("exceeded the configured timeout", str(payload["finding"]))
+            self.assertIn("Resume to retry", str(payload["next"]))
+            self.assertIn("Resume", labels)
+            self.assertIn("Skip Task 38", labels)
 
     def test_button_actions_offer_pause_when_running(self) -> None:
         listener = load_listener_module()

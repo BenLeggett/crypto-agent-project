@@ -1,6 +1,21 @@
-Read AGENTS.md and the relevant docs first.
+# Codex Task Contract
+
+You are running in a headless automation loop.
+
+You must not infer missing scope.
+
+If the task objective, allowed modification files, acceptance criteria, or validation commands are unclear, stop without modifying files and print:
+
+CODEX_NEEDS_CLARIFICATION:
+<specific missing information>
+
+Do not make a best-effort implementation when the task contract is incomplete.
 
 {task_context}
+
+## Standing Instructions
+
+Read AGENTS.md and the relevant docs first.
 
 Implement the next dependency-ordered task only.
 
