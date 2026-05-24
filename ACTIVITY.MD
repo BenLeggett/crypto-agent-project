@@ -286,3 +286,9 @@
 - Included a markdown flow diagram, evidence log template, preconditions, Discord control-plane verification, manual-mode cycle, Codex stdin smoke test, prompt-block/clarification flow, controlled auto rehearsal, failure rehearsals, skip-task flow, phase-gate flow, service runtime rehearsal, and final go/no-go rollback criteria.
 - Linked the readiness checklist from `README.md` and the orchestrator usage guide.
 
+## 2026-05-24
+- Fixed a Windows auto-mode Codex launch failure where `subprocess.run(["codex", ...])` could miss the npm PowerShell shim and surface as an unhandled `FileNotFoundError`.
+- Updated Stage 12D command construction to prefer resolved Codex executables, including `codex.cmd` on Windows, while allowing `CODEX_CLI_PATH` as an explicit override.
+- Added fail-closed handling for missing Codex CLI launches so the loop pauses with a Codex failure/review state instead of crashing through the Discord listener.
+- Documented `CODEX_CLI_PATH` in the env example, usage guide, and Mode B readiness checklist.
+- Ran orchestrator validation: `python -m pytest agent-orchestrator` -> 59 passed, 1 skipped, 2 subtests passed.

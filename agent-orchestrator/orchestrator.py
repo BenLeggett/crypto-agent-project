@@ -4,6 +4,7 @@ import argparse
 import inspect
 import os
 import re
+import shutil
 import sqlite3
 import subprocess
 import time
@@ -786,9 +787,31 @@ def _codex_last_message_path(project_root: Path) -> Path:
     return path
 
 
+def _codex_command_base() -> list[str]:
+    """Resolve the Codex CLI executable, preferring Windows npm shims when present."""
+    configured_path = os.getenv("CODEX_CLI_PATH", "").strip()
+    candidates = [configured_path] if configured_path else []
+    if os.name == "nt":
+        candidates.extend(["codex.cmd", "codex.exe", "codex.ps1", "codex"])
+    else:
+        candidates.append("codex")
+
+    for candidate in candidates:
+        if not candidate:
+            continue
+        executable = shutil.which(candidate) or candidate
+        if candidate == configured_path or shutil.which(candidate):
+            if executable.lower().endswith(".ps1"):
+                powershell = shutil.which("powershell.exe") or shutil.which("pwsh") or "powershell.exe"
+                return [powershell, "-NoProfile", "-ExecutionPolicy", "Bypass", "-File", executable]
+            return [executable]
+
+    return ["codex"]
+
+
 def _build_codex_exec_command(project_root: Path, codex_last_message_path: Path) -> list[str]:
     """Build the Stage 12D Codex CLI command using stdin for the prompt."""
-    command = ["codex"]
+    command = _codex_command_base()
     if _env_flag("CODEX_ENABLE_SEARCH"):
         command.append("--search")
     command.extend(
@@ -1356,6 +1379,34 @@ def run_loop(orchestrator_root: Path, max_iterations: int | None = None) -> int:
                     "Codex timeout",
                     "timeout",
                     output_text or f"Codex exceeded CODEX_TIMEOUT_SECONDS={timeout_seconds}.",
+                    validation="Not run",
+                )
+                return 0
+            except FileNotFoundError as exc:
+                output_text = (
+                    f"Unable to start Codex CLI: {exc}. "
+                    "Set CODEX_CLI_PATH to the full Codex executable path, or ensure the "
+                    "Codex npm shim is available on PATH for the process running the orchestrator."
+                )
+                _set_paused(db_path, True)
+                _set_setting(db_path, "awaiting_review_task_id", str(active_task["id"]))
+                discord_notifier.notify(_codex_failure_message(active_task, output_text))
+                _record_operator_event(
+                    db_path,
+                    "codex_failure",
+                    task=active_task,
+                    phase=_phase_display_name(current_phase),
+                    status="paused",
+                    summary="Codex CLI could not be started.",
+                    details={"output": _truncate_for_discord(output_text, limit=1500)},
+                )
+                _log_loop_activity(
+                    project_root,
+                    _phase_display_name(current_phase),
+                    active_task["id"],
+                    "Codex failed",
+                    "failed",
+                    output_text,
                     validation="Not run",
                 )
                 return 0

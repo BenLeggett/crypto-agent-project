@@ -19,6 +19,7 @@ class CodexPromptContractTests(unittest.TestCase):
         self._old_env = {
             "CODEX_MODEL": os.environ.get("CODEX_MODEL"),
             "CODEX_ENABLE_SEARCH": os.environ.get("CODEX_ENABLE_SEARCH"),
+            "CODEX_CLI_PATH": os.environ.get("CODEX_CLI_PATH"),
         }
 
     def tearDown(self) -> None:
@@ -56,13 +57,15 @@ class CodexPromptContractTests(unittest.TestCase):
     def test_build_codex_exec_command_includes_optional_model_and_search(self) -> None:
         os.environ["CODEX_MODEL"] = "gpt-5.5"
         os.environ["CODEX_ENABLE_SEARCH"] = "true"
+        os.environ["CODEX_CLI_PATH"] = "codex"
         with tempfile.TemporaryDirectory() as temp_dir:
             project_root = Path(temp_dir)
             output_path = project_root / "agent-orchestrator" / "codex_last_message.md"
 
             command = orchestrator._build_codex_exec_command(project_root, output_path)
 
-        self.assertEqual(command[:3], ["codex", "--search", "exec"])
+        self.assertTrue(Path(command[0]).name.lower().startswith("codex"))
+        self.assertEqual(command[1:3], ["--search", "exec"])
         self.assertIn("-m", command)
         self.assertIn("gpt-5.5", command)
         self.assertEqual(command[-1], "-")

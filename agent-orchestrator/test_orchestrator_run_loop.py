@@ -27,6 +27,7 @@ class RunLoopManualModeTests(unittest.TestCase):
             "CODEX_LAST_MESSAGE_PATH": os.environ.get("CODEX_LAST_MESSAGE_PATH"),
             "CODEX_MODEL": os.environ.get("CODEX_MODEL"),
             "CODEX_ENABLE_SEARCH": os.environ.get("CODEX_ENABLE_SEARCH"),
+            "CODEX_CLI_PATH": os.environ.get("CODEX_CLI_PATH"),
         }
         os.environ["CODEX_MODE"] = "manual"
         os.environ["PROJECT_ROOT"] = ".."
@@ -37,6 +38,7 @@ class RunLoopManualModeTests(unittest.TestCase):
         os.environ["CODEX_LAST_MESSAGE_PATH"] = "agent-orchestrator/codex_last_message.md"
         os.environ["CODEX_MODEL"] = ""
         os.environ["CODEX_ENABLE_SEARCH"] = "false"
+        os.environ["CODEX_CLI_PATH"] = "codex"
 
         self._old_notify = orchestrator.discord_notifier.notify
         self._old_validate = orchestrator.validator.validate
@@ -412,7 +414,8 @@ class RunLoopManualModeTests(unittest.TestCase):
             self.assertEqual(len(calls), 1)
             command = calls[0]["command"]
             self.assertIsInstance(command, list)
-            self.assertEqual(command[:2], ["codex", "exec"])
+            self.assertTrue(Path(command[0]).name.lower().startswith("codex"))
+            self.assertIn("exec", command)
             self.assertIn("-C", command)
             self.assertIn("workspace-write", command)
             self.assertIn('approval_policy="never"', command)
@@ -474,6 +477,27 @@ class RunLoopManualModeTests(unittest.TestCase):
             self.assertEqual(paused, "1")
             self.assertEqual(self.validation_calls, [])
             self.assertTrue(any("CODEX TIMEOUT" in item for item in self.notifications))
+
+    def test_auto_mode_missing_codex_cli_pauses_without_unhandled_error(self) -> None:
+        with tempfile.TemporaryDirectory() as temp_dir:
+            os.environ["CODEX_MODE"] = "auto"
+            orchestrator_root = self._write_project(Path(temp_dir))
+            db_path = orchestrator_root / "state.sqlite"
+            self._seed_task(db_path, "pending")
+            orchestrator.subprocess.run = lambda *args, **kwargs: (_ for _ in ()).throw(
+                FileNotFoundError("codex")
+            )
+            orchestrator.validator.validate = lambda project_root: self.validation_calls.append(project_root)
+
+            self.assertEqual(orchestrator.run_loop(orchestrator_root, max_iterations=1), 0)
+
+            status, paused = self._status_and_paused(db_path)
+            self.assertEqual(status, "in_progress")
+            self.assertEqual(paused, "1")
+            self.assertEqual(self.validation_calls, [])
+            self.assertTrue(any("CODEX FAILURE" in item for item in self.notifications))
+            events = self._operator_events(db_path)
+            self.assertTrue(any(row[0] == "codex_failure" for row in events))
 
     def test_auto_mode_clarification_marker_pauses_without_validation(self) -> None:
         with tempfile.TemporaryDirectory() as temp_dir:

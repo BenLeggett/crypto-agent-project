@@ -265,6 +265,7 @@ Codex auto-mode setup:
 
 ```dotenv
 CODEX_MODE=manual
+CODEX_CLI_PATH=
 CODEX_MODEL=
 CODEX_TIMEOUT_SECONDS=300
 MAX_AUTO_TASKS_PER_SESSION=5
@@ -275,6 +276,9 @@ CODEX_LAST_MESSAGE_PATH=agent-orchestrator/codex_last_message.md
 Notes:
 
 - Leave `CODEX_MODE=manual` until you have completed manual verification.
+- Leave `CODEX_CLI_PATH` empty unless the listener cannot find Codex. On
+  Windows, a reliable value is the full npm shim path such as
+  `C:\Users\<you>\AppData\Roaming\npm\codex.cmd`.
 - Set `CODEX_MODEL` only if the installed Codex CLI accepts that model id.
 - Set `CODEX_ENABLE_SEARCH=true` only for tasks that genuinely need current web
   information.

@@ -165,6 +165,8 @@ Pass:
 
 - [ ] `PROJECT_ROOT=..`
 - [ ] `CODEX_MODE=manual` before initial tests.
+- [ ] `CODEX_CLI_PATH` is empty when auto-detect works, or points to the full
+      Codex executable/shim path such as `C:\Users\<you>\AppData\Roaming\npm\codex.cmd`.
 - [ ] `CODEX_TIMEOUT_SECONDS=300` or another intentional value.
 - [ ] `MAX_AUTO_TASKS_PER_SESSION=1` for first unattended rehearsal.
 - [ ] `CODEX_ENABLE_SEARCH=false` unless the test task genuinely needs web search.
